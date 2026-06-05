@@ -1,0 +1,20 @@
+Source: edonish-auto
+Section: education
+Priority: optional
+Maintainer: Kamar Narziev <kamar@edonish.tj>
+Build-Depends: debhelper (>= 10)
+Standards-Version: 4.1.4
+
+Package: edonish-auto
+Version: 3.17.0
+Architecture: amd64
+Depends: libx11-6, libxext6, libxrender1, libxrandr2, libxinerama1, libxcursor1, libxi6, libxtst6, libgtk-3-0, libgdk-pixbuf2.0-0, libgl1
+Description: Automated grade management for edonish.tj
+ eDonish Auto is a desktop application for automated grade
+ management on the edonish.tj electronic journal system.
+ .
+ Features:
+  - Automatic login and data fetching
+  - Parallel grade filling with multiple workers
+  - Quarter, semester, and year marks automation
+  - CLI mode for Docker/server deployments

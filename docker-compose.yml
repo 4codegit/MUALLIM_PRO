@@ -1,0 +1,41 @@
+version: "3.8"
+
+services:
+  # ── CLI Mode (headless, for servers/Docker) ───────────────────────
+  edonish-cli:
+    build:
+      context: .
+      target: cli
+    container_name: edonish-auto-cli
+    environment:
+      - EDONISH_LOGIN=${EDONISH_LOGIN}
+      - EDONISH_PASSWORD=${EDONISH_PASSWORD}
+      - EDONISH_MIN_GRADE=${EDONISH_MIN_GRADE:-8}
+      - EDONISH_MAX_GRADE=${EDONISH_MAX_GRADE:-10}
+      - EDONISH_WORKERS=${EDONISH_WORKERS:-4}
+      - EDONISH_CLASS=${EDONISH_CLASS:-all}
+      - EDONISH_SUBJECT=${EDONISH_SUBJECT:-all}
+      - EDONISH_QUARTER=${EDONISH_QUARTER:-all}
+      - EDONISH_FILL_EMPTY=${EDONISH_FILL_EMPTY:-true}
+      - EDONISH_QUARTER_MARKS=${EDONISH_QUARTER_MARKS:-true}
+    volumes:
+      - ./logs:/app/logs
+      - ./output:/app/output
+    restart: "no"
+
+  # ── GUI Mode (requires X11 forwarding on Linux) ──────────────────
+  edonish-gui:
+    build:
+      context: .
+      target: gui
+    container_name: edonish-auto-gui
+    environment:
+      - DISPLAY=${DISPLAY}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - ./logs:/app/logs
+      - ./output:/app/output
+    network_mode: host
+    restart: "no"
+    profiles:
+      - gui

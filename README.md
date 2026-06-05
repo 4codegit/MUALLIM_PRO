@@ -1,0 +1,277 @@
+# eDonish Auto 📚
+
+**Автоматизация электронного журнала edonish.tj**
+
+Десктопная программа для автоматического заполнения оценок в электронном журнале eDonish (г. Душанбе, Таджикистан).
+
+## Возможности
+
+- 🔐 **Автоматический вход** — логин через API, получение всех данных (школа, классы, предметы, четверти)
+- 📋 **Автоматический анализ** — программа сама находит все классы, предметы, четверти, даты и студентов
+- 🎯 **Авто-оценки** — заполнение оценок (8-10) на все пустые ячейки журнала
+- ⚡ **Параллельные воркеры** — многопоточная обработка (4+ воркеров одновременно)
+- 📊 **Просмотр журнала** — удобный просмотр оценок по классам/предметам/четвертям
+- 🔄 **Четвертные оценки** — автоматическое заполнение четвертных, семестровых и годовых оценок
+- 📝 **Логирование** — подробные логи всех операций
+- 🐳 **Docker** — запуск в контейнере (CLI и GUI режимы)
+- 📦 **Установщики** — .exe (Windows), .rpm/.deb (Linux), .dmg (macOS)
+
+## Установка
+
+### 🪟 Windows
+
+Скачайте `edonish-auto-2.0.0-setup.exe` и запустите установщик.
+
+Или используйте CLI без установки:
+```
+edonish-auto-cli.exe --login YOUR_LOGIN --password YOUR_PASSWORD
+```
+
+### 🐧 Linux (Ubuntu/Debian)
+
+```bash
+# Установите .deb пакет
+sudo dpkg -i edonish-auto_2.0.0_amd64.deb
+
+# Или запустите бинарник напрямую
+chmod +x edonish-auto-linux-x64
+./edonish-auto-linux-x64
+```
+
+### 🐧 Linux (Fedora/RHEL)
+
+```bash
+sudo rpm -i edonish-auto-2.0.0-1.x86_64.rpm
+```
+
+### 🍎 macOS
+
+Откройте `edonish-auto-2.0.0.dmg` и перетащите приложение в Applications.
+
+## Быстрый старт
+
+### Способ 1: Скачанный установщик
+
+1. Установите программу (см. выше)
+2. Запустите `eDonish Auto`
+3. Введите логин и пароль от edonish.tj
+4. Выберите класс, предмет, четверть
+5. Нажмите "Анализировать", затем "Запустить"
+
+### Способ 2: Docker (рекомендуется для серверов)
+
+```bash
+# Клонируйте репозиторий
+git clone https://github.com/YOUR_USERNAME/edonish-auto.git
+cd edonish-auto
+
+# Создайте .env файл с вашими данными
+cp .env.example .env
+
+# Запустите CLI (headless, без GUI)
+docker compose up
+
+# Или с явными параметрами
+docker compose run edonish-cli --login 200117707 --password test123 --class "8Б"
+```
+
+### Способ 3: Python (ручная установка)
+
+```bash
+pip install customtkinter requests
+python3 main.py          # GUI режим
+python3 main_cli.py --login 200117707 --password test123  # CLI режим
+```
+
+### Способ 4: CLI режим
+
+```bash
+# Заполнить все пустые оценки
+edonish-auto-cli --login 200117707 --password test123
+
+# Только конкретный класс/предмет/четверть
+edonish-auto-cli --login 200117707 --password test123 \
+  --class "8Б" --subject "Технологияи иттилоотӣ" --quarter "Чоряки 4"
+
+# Только анализ (без записи)
+edonish-auto-cli --login 200117707 --password test123 --analyze-only
+
+# Просмотр журнала
+edonish-auto-cli --login 200117707 --password test123 \
+  --view-journal --class "8Б" --subject "Технологияи иттилоотӣ" --quarter "Чоряки 4"
+
+# С сохранением отчёта в JSON
+edonish-auto-cli --login 200117707 --password test123 --save-report --json-output
+```
+
+## Сборка из исходников
+
+### Требования для сборки
+
+- Python 3.12+
+- PyInstaller: `pip install pyinstaller`
+- Для GUI: `pip install customtkinter`
+- Для RPM: `sudo apt install rpm` или `sudo dnf install rpm-build`
+- Для DEB: `dpkg-deb` (входит в Ubuntu/Debian)
+- Для Windows .exe: NSIS (на Windows)
+- Для macOS .dmg: `hdiutil` (на macOS)
+
+### Сборка
+
+```bash
+# Скомпилировать для текущей платформы
+bash build.sh linux     # Linux бинарники
+bash build.sh rpm       # Linux + RPM пакет
+bash build.sh windows   # Windows (только на Windows)
+bash build.sh macos     # macOS (только на macOS)
+bash build.sh all       # Всё для текущей платформы
+
+# Или через Makefile
+make build              # Docker build
+make native-gui         # GUI напрямую
+make native-cli         # CLI напрямую
+```
+
+### GitHub Actions CI/CD
+
+При пуше тега `v*` автоматически собираются все платформы и создаётся Release:
+
+```bash
+git tag v2.0.0
+git push origin v2.0.0
+```
+
+Артефакты в Release:
+- `edonish-auto-2.0.0-setup.exe` — Windows установщик
+- `edonish-auto_2.0.0_amd64.deb` — Ubuntu/Debian
+- `edonish-auto-2.0.0-1.x86_64.rpm` — Fedora/RHEL
+- `edonish-auto-2.0.0.dmg` — macOS
+
+## Docker: подробности
+
+### CLI режим (по умолчанию)
+
+```bash
+docker compose build
+docker compose up
+docker compose run edonish-cli --login 200117707 --password test123 --min-grade 9
+```
+
+### GUI режим (только Linux с X11)
+
+```bash
+xhost +local:docker
+docker compose --profile gui up edonish-gui
+xhost -local:docker
+```
+
+### Переменные окружения
+
+| Переменная | Описание | По умолчанию |
+|------------|----------|--------------|
+| `EDONISH_LOGIN` | Логин от edonish.tj | — |
+| `EDONISH_PASSWORD` | Пароль от edonish.tj | — |
+| `EDONISH_MIN_GRADE` | Минимальная оценка | 8 |
+| `EDONISH_MAX_GRADE` | Максимальная оценка | 10 |
+| `EDONISH_WORKERS` | Количество параллельных воркеров | 4 |
+| `EDONISH_CLASS` | Фильтр по классу | all |
+| `EDONISH_SUBJECT` | Фильтр по предмету | all |
+| `EDONISH_QUARTER` | Фильтр по четверти | all |
+
+## CLI параметры
+
+```
+edonish-auto-cli [OPTIONS]
+
+Обязательные:
+  --login LOGIN         Логин (ID) от edonish.tj
+  --password PASSWORD   Пароль от edonish.tj
+
+Фильтры:
+  --class CLASS         Класс (напр. '8Б') или 'all'
+  --subject SUBJECT     Предмет или 'all'
+  --quarter QUARTER     Четверть или 'all'
+
+Оценки:
+  --min-grade N         Минимальная оценка (default: 8)
+  --max-grade N         Максимальная оценка (default: 10)
+
+Выполнение:
+  --workers N           Воркеры (default: 4)
+  --fill-empty BOOL     Только пустые ячейки (default: True)
+  --quarter-marks BOOL  Четвертные оценки (default: True)
+  --analyze-only        Только анализ, без записи
+  --view-journal        Просмотр журнала
+
+Вывод:
+  --json-output         Результат в JSON
+  --save-report         Сохранить отчёт в файл
+```
+
+## Структура проекта
+
+```
+edonish-auto/
+├── main.py                 # GUI приложение (CustomTkinter)
+├── main_cli.py             # CLI интерфейс (headless)
+├── api_client.py           # API клиент edonish.tj
+├── grade_engine.py         # Движок автоматизации оценок
+├── config.py               # Конфигурация
+├── requirements.txt        # Зависимости Python
+├── edonish-auto.spec       # PyInstaller spec (GUI)
+├── edonish-auto-cli.spec   # PyInstaller spec (CLI)
+├── edonish-auto.spec.rpm   # RPM spec file
+├── installer.nsi           # NSIS installer (Windows)
+├── build.sh                # Скрипт сборки всех платформ
+├── package.sh              # DEB/RPM упаковка
+├── Dockerfile              # Docker сборка (multi-stage)
+├── docker-compose.yml      # Docker Compose
+├── .github/workflows/      # CI/CD (Windows/Linux/macOS)
+├── .env.example            # Пример переменных окружения
+├── Makefile                # Удобные команды
+├── LICENSE.txt             # MIT лицензия
+└── run.sh                  # Скрипт запуска
+```
+
+## API Endpoints (обнаружено)
+
+| Endpoint | Метод | Описание |
+|----------|-------|----------|
+| `/auth/v1/login` | POST | Авторизация |
+| `/auth/v1/refresh_token` | GET | Обновление токена |
+| `/auth/v1/header/info` | GET | Информация о пользователе |
+| `/teacher/v1/journal` | OPTIONS | Доступные классы/предметы |
+| `/teacher/v1/journal/dates` | GET | Даты журнала |
+| `/teacher/v1/journal/students` | GET | Студенты с оценками |
+| `/teacher/v1/journal/10_point_mark/create` | POST | Создание оценки |
+| `/teacher/v1/journal/10_point_quarter_mark/create` | POST | Четвертная оценка |
+| `/teacher/v1/journal/10_point_semester/create` | POST | Семестровая оценка |
+| `/teacher/v1/journal/10_point_year/create` | POST | Годовая оценка |
+| `/teacher/v1/journal/mark/delete` | POST | Удаление оценки |
+| `/school_admin/v1/period/quaters` | GET | Список четвертей |
+| `/groups/list` | GET | Список классов школы |
+| `/teacher/subject` | GET | Предметы учителя |
+| `/subgroups` | GET | Подгруппы класса |
+
+## Поддерживаемые роли
+
+| Роль | Префикс API |
+|------|-------------|
+| teacher | /teacher/v1 |
+| classroom-teacher | /teacher/v1 |
+| school_admin | /school_admin/v1 |
+| director | /director/v1 |
+| headteacher | /headteacher/v1 |
+| parent | /parent/v1 |
+| student | /student/v1 |
+
+## Безопасность
+
+- Токены JWT хранятся только в памяти
+- Пароли не сохраняются
+- Все запросы идут через HTTPS
+- `.env` файлы исключены из Git
+
+## Лицензия
+
+MIT License — см. [LICENSE.txt](LICENSE.txt)
