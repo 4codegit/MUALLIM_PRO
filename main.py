@@ -877,6 +877,13 @@ class EdonishAutoApp:
                 horizontal_alignment=CrossAxisAlignment.CENTER,
             ),
         )
+        
+        # Horizontal scroll wrapper for mobile (wide table support)
+        self.journal_grid_wrapper = Row(
+            [self.journal_grid_container],
+            scroll=ScrollMode.AUTO if self._is_mobile else None,
+            expand=True,
+        )
 
         self.journal_page = Column(
             scroll=ScrollMode.AUTO,
@@ -919,7 +926,7 @@ class EdonishAutoApp:
                     content=Container(
                         padding=16,
                         expand=True,
-                        content=self.journal_grid_container,
+                        content=self.journal_grid_wrapper,
                     ),
                 ),
                 Container(height=12),
@@ -1731,7 +1738,10 @@ class EdonishAutoApp:
             self._journal_loaded = False
             self.journal_clear_btn.visible = False
             self.journal_save_btn.disabled = True
-            self.page.update()
+            try:
+                self.page.run_thread(lambda: self.page.update())
+            except Exception:
+                pass
             return
 
         self.journal_student_count.value = f"{len(students)} учеников | {len(dates)} дат"
@@ -1999,10 +2009,14 @@ class EdonishAutoApp:
         # Update dashboard keyboard handler to include grid navigation
         self.page.on_keyboard_event = self._on_dashboard_keyboard
 
+        # Use run_thread for page update to prevent UI freezing
         try:
-            self.page.run_thread(self._safe_update)
+            self.page.run_thread(lambda: self.page.update())
         except Exception:
-            pass
+            try:
+                self.page.update()
+            except Exception:
+                pass
 
     def _make_grade_cell(self, row, col, value, mark_id, student_id, date_id, qprop_id):
         """Create a single editable grade cell (TextField)."""
