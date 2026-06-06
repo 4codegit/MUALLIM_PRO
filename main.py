@@ -2400,7 +2400,13 @@ class EdonishAutoApp:
             for col_idx, d in enumerate(dates):
                 date_id = d["assignmentDateId"]
                 mark_info = marks_by_date.get(date_id)
-                mark_value = mark_info.get("shortName", "") if mark_info else ""
+                # Extract numeric grade from shortName (e.g., "1/2" -> "1", "0/2" -> "0")
+                mark_value_raw = mark_info.get("shortName", "") if mark_info else ""
+                # Parse grade - take only the first number before "/" or whole string if no "/"
+                if mark_value_raw and "/" in mark_value_raw:
+                    mark_value = mark_value_raw.split("/")[0]
+                else:
+                    mark_value = mark_value_raw
                 mark_id = mark_info.get("assignmentMarkId", "") if mark_info else ""
                 qprop_id = d.get("quarterPropertyId", self._current_journal_params.get("qprop_id", 0))
 
@@ -2427,7 +2433,12 @@ class EdonishAutoApp:
             quarter_mark_val = ""
             quarter_mark_id = ""
             if quarter_mark_list and len(quarter_mark_list) > 0:
-                quarter_mark_val = quarter_mark_list[0].get("shortName", "")
+                quarter_mark_val_raw = quarter_mark_list[0].get("shortName", "")
+                # Parse grade - take only the first number before "/"
+                if quarter_mark_val_raw and "/" in quarter_mark_val_raw:
+                    quarter_mark_val = quarter_mark_val_raw.split("/")[0]
+                else:
+                    quarter_mark_val = quarter_mark_val_raw
                 quarter_mark_id = quarter_mark_list[0].get("quarterMarkId", "") or quarter_mark_list[0].get("assignmentMarkId", "")
 
             # Store quarter data for this student
@@ -2444,6 +2455,9 @@ class EdonishAutoApp:
             grade_values = []
             for m in (s.get("subjectMarks") or []):
                 sn = m.get("shortName", "")
+                # Parse grade - take only the first number before "/"
+                if sn and "/" in sn:
+                    sn = sn.split("/")[0]
                 if sn and sn.isdigit():
                     v = int(sn)
                     if MIN_GRADE <= v <= MAX_GRADE:
@@ -2477,7 +2491,12 @@ class EdonishAutoApp:
                 mark_list = s.get(mark_key, [])
                 mark_val = ""
                 if mark_list and len(mark_list) > 0:
-                    mark_val = mark_list[0].get("shortName", "")
+                    mark_val_raw = mark_list[0].get("shortName", "")
+                    # Parse grade - take only the first number before "/"
+                    if mark_val_raw and "/" in mark_val_raw:
+                        mark_val = mark_val_raw.split("/")[0]
+                    else:
+                        mark_val = mark_val_raw
                 row_cells.append(
                     Container(
                         content=Text(mark_val, size=14, weight=FontWeight.W_500, text_align=TextAlign.CENTER),
