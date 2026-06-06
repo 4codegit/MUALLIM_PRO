@@ -302,172 +302,128 @@ class EdonishAutoApp:
     # ════════════════════════════════════════════════════════════════
 
     def _build_dashboard_view(self, user_info):
-        """Build main dashboard with adaptive layout for mobile/desktop."""
+        """Build main dashboard with bottom navigation like Telegram Mobile."""
         name = f"{user_info.get('last_name', '')} {user_info.get('first_name', '')}"
         school_info = f"Школа ID: {self.api.school_id} | {self.api.role}"
+        if self.api.has_school_admin_rights:
+            school_info += " (teacher+admin)"
         
-        # Detect if mobile (use page width as indicator)
-        self._is_mobile = self.page.window.width < 600 if hasattr(self.page, 'window') else False
+        # Always use mobile-style layout (bottom nav)
+        self._is_mobile = True
         
-        # Adaptive font sizes for mobile/desktop
-        title_size = 16 if self._is_mobile else 20
-        label_size = 12 if self._is_mobile else 14
-        button_size = 13 if self._is_mobile else 15
-
-        # ── Navigation (Rail for desktop, Bottom nav for mobile) ─────
-        self.nav_rail = None
-        self.nav_bar = None
-        
-        if not self._is_mobile:
-            # Desktop: NavigationRail
-            self.nav_rail = NavigationRail(
-                selected_index=0,
-                label_type=NavigationRailLabelType.ALL,
-                min_width=100,
-                min_extended_width=220,
-                group_alignment=-0.9,
-                destinations=[
-                    NavigationRailDestination(
-                        icon=Icons.ASSIGNMENT_OUTLINED,
-                        selected_icon=Icons.ASSIGNMENT,
-                        label="Авто-оценки",
-                    ),
-                    NavigationRailDestination(
-                        icon=Icons.MENU_BOOK_OUTLINED,
-                        selected_icon=Icons.MENU_BOOK,
-                        label="Журнал",
-                    ),
-                    NavigationRailDestination(
-                        icon=Icons.TERMINAL_OUTLINED,
-                        selected_icon=Icons.TERMINAL,
-                        label="Логи",
-                    ),
-                ],
-                on_change=self._on_nav_change,
-            )
-        else:
-            # Mobile: BottomNavigationBar
-            self.nav_bar = NavigationBar(
-                destinations=[
-                    NavigationBarDestination(icon=Icons.ASSIGNMENT_OUTLINED, selected_icon=Icons.ASSIGNMENT, label="Авто-оценки"),
-                    NavigationBarDestination(icon=Icons.MENU_BOOK_OUTLINED, selected_icon=Icons.MENU_BOOK, label="Журнал"),
-                    NavigationBarDestination(icon=Icons.TERMINAL_OUTLINED, selected_icon=Icons.TERMINAL, label="Логи"),
-                ],
-                on_change=self._on_nav_change,
-            )
-
-        # ── Build pages ────────────────────────────────────────────
+        # Build pages first
         self._build_auto_grade_page()
         self._build_journal_page()
+        self._build_topics_page()
+        self._build_admin_page()
         self._build_logs_page()
 
         self.pages = [
             self.auto_grade_page,
             self.journal_page,
+            self.topics_page,
+            self.admin_page,
             self.logs_page,
         ]
 
-        # ── AppBar ─────────────────────────────────────────────────
+        self.nav_index = 0
+
+        # AppBar - simplified
         appbar = AppBar(
-            leading=Icon(Icons.SCHOOL, color=ft.Colors.BLUE_600, size=28),
-            leading_width=40,
-            title=Text(f"{APP_NAME} v{APP_VERSION}", size=18, weight=FontWeight.W_600),
+            leading=Icon(Icons.SCHOOL, color=ft.Colors.BLUE_600, size=26),
+            leading_width=50,
+            title=Text(f"{APP_NAME}", size=16, weight=FontWeight.W_600),
             center_title=False,
             bgcolor=ft.Colors.SURFACE,
             actions=[
-                Container(
-                    content=Row([
-                        Icon(Icons.PERSON, size=20, color=ft.Colors.GREY_700),
-                        Text(name, size=14, weight=FontWeight.W_500),
-                        Text(school_info, size=12, color=ft.Colors.GREY_500),
-                    ], spacing=8),
-                    padding=0,
+                IconButton(
+                    icon=Icons.PERSON,
+                    tooltip="Профиль",
+                    on_click=lambda _: self._show_user_info(name, school_info),
                 ),
                 IconButton(
                     icon=Icons.DARK_MODE_OUTLINED,
-                    tooltip="Сменить тему",
+                    tooltip="Тема",
                     on_click=self._toggle_theme,
                 ),
                 IconButton(
                     icon=Icons.LOGOUT,
-                    tooltip="Выйти из аккаунта",
+                    tooltip="Выйти",
                     on_click=lambda _: self._on_logout(),
                 ),
             ],
         )
 
-        # ── Main layout ────────────────────────────────────────────
         self.page.clean()
         self.page.appbar = appbar
         
-        # Page content container with proper scrolling
+        # Bottom navigation bar (Telegram-style) - always at bottom
+        self.nav_bar = NavigationBar(
+            destinations=[
+                NavigationBarDestination(icon=Icons.ASSIGNMENT_OUTLINED, selected_icon=Icons.ASSIGNMENT, label="Авто"),
+                NavigationBarDestination(icon=Icons.MENU_BOOK_OUTLINED, selected_icon=Icons.MENU_BOOK, label="Журнал"),
+                NavigationBarDestination(icon=Icons.DESCRIPTION_OUTLINED, selected_icon=Icons.DESCRIPTION, label="Темы"),
+                NavigationBarDestination(icon=Icons.ADMIN_PANEL_SETTINGS_OUTLINED, selected_icon=Icons.ADMIN_PANEL_SETTINGS, label="Админ"),
+                NavigationBarDestination(icon=Icons.TERMINAL_OUTLINED, selected_icon=Icons.TERMINAL, label="Логи"),
+            ],
+            on_change=self._on_nav_change,
+        )
+        
+        # Page container
         self.page_container = Container(
             expand=True,
             content=self.pages[0],
-            clip_behavior=ClipBehavior.HARD_EDGE,
         )
         
-        if not self._is_mobile:
-            # Desktop: horizontal layout with NavigationRail
-            self.page.add(
-                Row(
-                    expand=True,
-                    spacing=0,
-                    controls=[
-                        self.nav_rail,
-                        VerticalDivider(width=1),
-                        self.page_container,
-                    ],
-                )
+        # Main layout - always vertical with bottom nav
+        self.page.add(
+            Column(
+                expand=True,
+                spacing=0,
+                controls=[self.page_container],
             )
-        else:
-            # Mobile: vertical layout with BottomNavigationBar
-            self.page.add(
-                Column(
-                    expand=True,
-                    spacing=0,
-                    controls=[
-                        self.page_container,
-                    ],
-                )
-            )
-            self.page.bottom_appbar = self.nav_bar
+        )
+        self.page.bottom_appbar = self.nav_bar
         
-        # Status bar at bottom (show on desktop only, or use overlay positioning on mobile)
-        self.status_text = Text("Готов", size=13, color=ft.Colors.GREY_600)
+        # Status bar
+        self.status_text = Text("Готов", size=12, color=ft.Colors.GREY_600)
         self.page.overlay.append(
             Container(
                 content=Row([
                     self.status_text,
                     Container(expand=True),
-                    Text("Ctrl+S: сохранить | Del: удалить | Стрелки: навигация | F5: анализировать", size=11, color=ft.Colors.GREY_400),
+                    Text("Ctrl+S: сохранить | Del: удалить | Стрелки: навигация | F5: анализ", size=11, color=ft.Colors.GREY_400),
                 ]),
-                padding=ft.controls.padding.Padding(left=12, top=6, right=12, bottom=6),
-                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                border=Border(
-                    top=BorderSide(1, ft.Colors.OUTLINE_VARIANT),
-                    right=BorderSide(0, ft.Colors.TRANSPARENT),
-                    bottom=BorderSide(0, ft.Colors.TRANSPARENT),
-                    left=BorderSide(0, ft.Colors.TRANSPARENT),
-                ),
+                padding=ft.controls.padding.Padding(left=10, top=5, right=10, bottom=5),
+                bgcolor=ft.Colors.GREY_100,
+                border=Border(top=BorderSide(1, ft.Colors.GREY_300)),
                 left=0, right=0, bottom=0,
             )
         )
 
-        # Keyboard shortcuts
         self.page.on_keyboard_event = self._on_dashboard_keyboard
         self.page.update()
 
+    def _show_user_info(self, name: str, school_info: str):
+        """Show user info dialog."""
+        self.page.dialog = AlertDialog(
+            title=Text("Профиль"),
+            content=Column([
+                Text(name, size=16, weight=FontWeight.W_600),
+                Text(school_info, size=13, color=ft.Colors.GREY_600),
+            ], spacing=8),
+            actions=[
+                TextButton("OK", on_click=lambda _: self.page.dialog.close()),
+            ],
+        )
+        self.page.dialog.open = True
+        self.page.update()
+
     def _on_nav_change(self, e):
-        index = e.control.selected_index
-        # Replace the content area (3rd child of the Row)
-        row = self.page.controls[0] if self.page.controls else None
-        if row and isinstance(row, Row) and len(row.controls) >= 3:
-            row.controls[2] = Container(
-                expand=True,
-                content=self.pages[index],
-            )
-            self.page.update()
+        """Handle navigation bar change."""
+        self.nav_index = e.control.selected_index
+        self.page_container.content = self.pages[self.nav_index]
+        self.page.update()
 
     def _toggle_theme(self, e=None):
         if self.page.theme_mode == ft.ThemeMode.DARK:
@@ -994,6 +950,357 @@ class EdonishAutoApp:
         self.logs_page.padding = 20
 
     # ════════════════════════════════════════════════════════════════
+    #  TOPICS PAGE
+    # ════════════════════════════════════════════════════════════════
+
+    def _build_topics_page(self):
+        """Topics and Homework management page."""
+        self.topics_class_dropdown = Dropdown(
+            label="Класс",
+            width=200,
+            options=[dropdown.Option("Все классы")] + [dropdown.Option(g["name"]) for g in self.groups_data],
+            value="Все классы",
+        )
+        self.topics_subject_dropdown = Dropdown(
+            label="Предмет",
+            width=200,
+            options=[dropdown.Option("Все предметы")] + [dropdown.Option(s["subjectName"]) for s in self.teacher_subjects],
+            value="Все предметы",
+        )
+        self.topics_quarter_dropdown = Dropdown(
+            label="Четверть",
+            width=200,
+            options=[dropdown.Option("Все четверти")] + [dropdown.Option(q["name"]) for q in self.quarters_data],
+            value="Все четверти",
+        )
+
+        self.topics_input = TextField(
+            label="Темы (по одной на строку)",
+            multiline=True,
+            min_lines=6,
+            max_lines=15,
+            width=600,
+            hint_text="Тема 1\nТема 2\n...",
+        )
+        self.hw_input = TextField(
+            label="ДЗ (по одной на строку)",
+            multiline=True,
+            min_lines=6,
+            max_lines=15,
+            width=600,
+            hint_text="ДЗ 1\nДЗ 2\n...",
+        )
+        
+        self.topics_list_container = Container(
+            content=Text("Загрузите темы чтобы увидеть список", size=14, color=ft.Colors.GREY_500),
+        )
+
+        self.topics_page = Column(
+            scroll=ScrollMode.AUTO,
+            expand=True,
+            controls=[
+                Card(
+                    content=Container(
+                        padding=24,
+                        content=Column([
+                            Row([
+                                Icon(Icons.DESCRIPTION, size=24, color=ft.Colors.BLUE_600),
+                                Text("Темы уроков и ДЗ", size=20, weight=FontWeight.W_600),
+                            ], spacing=10),
+                            Container(height=16),
+                            Row([
+                                self.topics_class_dropdown,
+                                Container(width=12),
+                                self.topics_subject_dropdown,
+                                Container(width=12),
+                                self.topics_quarter_dropdown,
+                                Container(width=12),
+                                FilledButton(
+                                    content=Row([Icon(Icons.DOWNLOAD, size=16), Text("Загрузить", size=14)]),
+                                    on_click=lambda _: self._on_topics_load(),
+                                ),
+                            ], spacing=0),
+                            Container(height=16),
+                            Row([
+                                Container(content=self.topics_input, expand=True),
+                                Container(width=16),
+                                Container(content=self.hw_input, expand=True),
+                            ], spacing=0),
+                            Container(height=8),
+                            Row([
+                                FilledButton(
+                                    content=Row([Icon(Icons.EDIT_NOTE, size=16), Text("Заполнить темы", size=14)]),
+                                    on_click=lambda _: self._on_topics_fill(),
+                                ),
+                                Container(width=12),
+                                OutlinedButton(
+                                    content=Row([Icon(Icons.HOME_WORK, size=16), Text("Заполнить ДЗ", size=14)]),
+                                    on_click=lambda _: self._on_hw_fill(),
+                                ),
+                                Container(width=12),
+                                OutlinedButton(
+                                    content=Row([Icon(Icons.REFRESH, size=16), Text("Обновить", size=14)]),
+                                    on_click=lambda _: self._on_topics_load(),
+                                ),
+                            ], spacing=0),
+                        ]),
+                    ),
+                ),
+                Container(height=12),
+                Card(
+                    expand=True,
+                    content=Container(
+                        padding=16,
+                        expand=True,
+                        content=self.topics_list_container,
+                    ),
+                ),
+            ],
+        )
+        self.topics_page.padding = 20
+
+    def _on_topics_load(self):
+        """Load topics for selected class/subject/quarter."""
+        class_name = self.topics_class_dropdown.value
+        if not class_name or class_name == "Все классы":
+            self._show_snackbar("Выберите класс!")
+            return
+        self.topics_list_container.content = ProgressRing()
+        self.page.update()
+        self._log_message("Загрузка тем...")
+        # Reuse journal dates loading logic
+        self._on_load_journal()
+
+    def _on_topics_fill(self):
+        """Fill topics from input."""
+        topics = [t.strip() for t in (self.topics_input.value or "").split("\n") if t.strip()]
+        if not topics:
+            self._show_snackbar("Введите темы!")
+            return
+        if not hasattr(self, '_dates_data') or not self._dates_data:
+            self._show_snackbar("Сначала загрузите темы!")
+            return
+        empty = [d for d in self._dates_data if not d.get("topic", "").strip()]
+        if not empty:
+            self._show_snackbar("Все даты имеют темы!")
+            return
+        to_fill = min(len(topics), len(empty))
+        self._log_message(f"Заполнение {to_fill} тем...")
+        def do_fill():
+            filled = 0
+            for i in range(to_fill):
+                try:
+                    self.api.update_assignment(schedule_date_id=empty[i]["assignmentDateId"], topic=topics[i])
+                    filled += 1
+                    time.sleep(0.3)
+                except Exception as e:
+                    self._log_message(f"Ошибка: {e}", "error")
+            self._log_message(f"✅ Заполнено: {filled}/{to_fill}")
+            self._on_topics_load()
+        threading.Thread(target=do_fill, daemon=True).start()
+
+    def _on_hw_fill(self):
+        """Fill homework from input."""
+        hws = [h.strip() for h in (self.hw_input.value or "").split("\n") if h.strip()]
+        if not hws:
+            self._show_snackbar("Введите ДЗ!")
+            return
+        if not hasattr(self, '_dates_data') or not self._dates_data:
+            self._show_snackbar("Сначала загрузите темы!")
+            return
+        empty = [d for d in self._dates_data if not d.get("homeWork", "").strip()]
+        if not empty:
+            self._show_snackbar("Все даты имеют ДЗ!")
+            return
+        to_fill = min(len(hws), len(empty))
+        self._log_message(f"Заполнение {to_fill} ДЗ...")
+        def do_fill():
+            filled = 0
+            for i in range(to_fill):
+                try:
+                    self.api.update_assignment(schedule_date_id=empty[i]["assignmentDateId"], home_work=hws[i])
+                    filled += 1
+                    time.sleep(0.3)
+                except Exception as e:
+                    self._log_message(f"Ошибка: {e}", "error")
+            self._log_message(f"✅ Заполнено: {filled}/{to_fill}")
+            self._on_topics_load()
+        threading.Thread(target=do_fill, daemon=True).start()
+
+    # ════════════════════════════════════════════════════════════════
+    #  ADMIN PAGE
+    # ════════════════════════════════════════════════════════════════
+
+    def _build_admin_page(self):
+        """School Admin page - extended teacher capabilities."""
+        self.admin_group_num = TextField(label="Номер (напр. '8')", width=120)
+        self.admin_group_name = TextField(label="Название (напр. 'А')", width=120)
+        self.admin_subject_name = TextField(label="Предмет", width=250)
+        
+        self.admin_results = Text("Выберите действие", size=14, color=ft.Colors.GREY_600)
+
+        self.admin_page = Column(
+            scroll=ScrollMode.AUTO,
+            expand=True,
+            controls=[
+                Card(
+                    content=Container(
+                        padding=24,
+                        content=Column([
+                            Row([
+                                Icon(Icons.ADMIN_PANEL_SETTINGS, size=24, color=ft.Colors.PURPLE_600),
+                                Text("Администрирование", size=20, weight=FontWeight.W_600),
+                            ], spacing=10),
+                            Container(height=16),
+                            Text("Права: teacher + school_admin", size=14, color=ft.Colors.GREY_600),
+                            Container(height=20),
+                            Divider(),
+                            Container(height=12),
+                            Text("Управление классами", size=16, weight=FontWeight.W_600),
+                            Container(height=8),
+                            Row([
+                                self.admin_group_num,
+                                Container(width=8),
+                                self.admin_group_name,
+                                Container(width=16),
+                                FilledButton(
+                                    content=Row([Icon(Icons.ADD, size=16), Text("Добавить класс", size=14)]),
+                                    on_click=lambda _: self._on_admin_add_group(),
+                                ),
+                            ], spacing=0),
+                            Container(height=20),
+                            Divider(),
+                            Container(height=12),
+                            Text("Управление предметами", size=16, weight=FontWeight.W_600),
+                            Container(height=8),
+                            Row([
+                                self.admin_subject_name,
+                                Container(width=16),
+                                FilledButton(
+                                    content=Row([Icon(Icons.ADD, size=16), Text("Добавить предмет", size=14)]),
+                                    on_click=lambda _: self._on_admin_add_subject(),
+                                ),
+                            ], spacing=0),
+                            Container(height=20),
+                            Divider(),
+                            Container(height=12),
+                            Text("Просмотр данных", size=16, weight=FontWeight.W_600),
+                            Container(height=8),
+                            Row([
+                                OutlinedButton(
+                                    content=Row([Icon(Icons.CALENDAR_MONTH, size=16), Text("Четверти", size=14)]),
+                                    on_click=lambda _: self._on_admin_view_quarters(),
+                                ),
+                                Container(width=12),
+                                OutlinedButton(
+                                    content=Row([Icon(Icons.GROUP, size=16), Text("Классы", size=14)]),
+                                    on_click=lambda _: self._on_admin_view_groups(),
+                                ),
+                                Container(width=12),
+                                OutlinedButton(
+                                    content=Row([Icon(Icons.LIST, size=16), Text("Предметы", size=14)]),
+                                    on_click=lambda _: self._on_admin_view_subjects(),
+                                ),
+                            ], spacing=0),
+                        ]),
+                    ),
+                ),
+                Container(height=12),
+                Card(
+                    expand=True,
+                    content=Container(
+                        padding=16,
+                        expand=True,
+                        content=self.admin_results,
+                    ),
+                ),
+            ],
+        )
+        self.admin_page.padding = 20
+
+    def _on_admin_add_group(self):
+        """Add a new class."""
+        num = self.admin_group_num.value or ""
+        name = self.admin_group_name.value or ""
+        if not num or not name:
+            self._show_snackbar("Введите номер и название!")
+            return
+        self.admin_results.value = "Создание..."
+        self.page.update()
+        def do_add():
+            result = self.api.create_group(name=name, number=num)
+            if result:
+                self.admin_results.value = f"✅ Класс {num}{name} создан"
+                self.admin_results.color = ft.Colors.GREEN_700
+            else:
+                self.admin_results.value = "❌ Ошибка создания"
+                self.admin_results.color = ft.Colors.RED_700
+            self.page.run_thread(self._safe_update)
+        threading.Thread(target=do_add, daemon=True).start()
+
+    def _on_admin_add_subject(self):
+        """Add a new subject."""
+        name = self.admin_subject_name.value or ""
+        if not name:
+            self._show_snackbar("Введите название предмета!")
+            return
+        self.admin_results.value = "Создание..."
+        self.page.update()
+        def do_add():
+            result = self.api.create_subject(name=name)
+            if result:
+                self.admin_results.value = f"✅ Предмет '{name}' создан"
+                self.admin_results.color = ft.Colors.GREEN_700
+            else:
+                self.admin_results.value = "❌ Ошибка создания"
+                self.admin_results.color = ft.Colors.RED_700
+            self.page.run_thread(self._safe_update)
+        threading.Thread(target=do_add, daemon=True).start()
+
+    def _on_admin_view_quarters(self):
+        """View all quarters."""
+        self.admin_results.value = "Загрузка..."
+        self.page.update()
+        def load():
+            quarters = self.api.get_quarters()
+            lines = [f"Всего четвертей: {len(quarters)}\n"]
+            for q in quarters[:20]:
+                lines.append(f"  • {q.get('name', '')}")
+            self.admin_results.value = "\n".join(lines)
+            self.admin_results.color = ft.Colors.GREY_800
+            self.page.run_thread(self._safe_update)
+        threading.Thread(target=load, daemon=True).start()
+
+    def _on_admin_view_groups(self):
+        """View all groups."""
+        self.admin_results.value = "Загрузка..."
+        self.page.update()
+        def load():
+            groups = self.api.get_groups()
+            lines = [f"Всего классов: {len(groups)}\n"]
+            for g in groups[:30]:
+                name = f"{g.get('number', '')}{g.get('name', '')}"
+                lines.append(f"  • {name}")
+            self.admin_results.value = "\n".join(lines)
+            self.admin_results.color = ft.Colors.GREY_800
+            self.page.run_thread(self._safe_update)
+        threading.Thread(target=load, daemon=True).start()
+
+    def _on_admin_view_subjects(self):
+        """View all subjects."""
+        self.admin_results.value = "Загрузка..."
+        self.page.update()
+        def load():
+            subjects = self.api.get_all_school_subjects()
+            lines = [f"Всего предметов: {len(subjects)}\n"]
+            for s in subjects[:30]:
+                lines.append(f"  • {s.get('subjectName', s.get('name', ''))}")
+            self.admin_results.value = "\n".join(lines)
+            self.admin_results.color = ft.Colors.GREY_800
+            self.page.run_thread(self._safe_update)
+        threading.Thread(target=load, daemon=True).start()
+
+    # ════════════════════════════════════════════════════════════════
     #  SESSION PERSISTENCE
     # ════════════════════════════════════════════════════════════════
 
@@ -1082,6 +1389,7 @@ class EdonishAutoApp:
         self._grid_cols = 0
         self._journal_loaded = False
         self._current_journal_params = {}
+        self._dates_data = []
         self.api = EdonishAPI()
         self.engine = GradeEngine(self.api)
         self.engine.set_callbacks(
@@ -1196,24 +1504,28 @@ class EdonishAutoApp:
         ]
         self.class_dropdown.options = class_options
         self.journal_class_dropdown.options = class_options
+        self.topics_class_dropdown.options = class_options
 
         subject_options = [dropdown.Option("Все предметы")] + [
             dropdown.Option(s["subjectName"]) for s in sorted(self.teacher_subjects, key=lambda x: x["subjectName"])
         ]
         self.subject_dropdown.options = subject_options
         self.journal_subject_dropdown.options = subject_options
+        self.topics_subject_dropdown.options = subject_options
 
         quarter_options = [dropdown.Option("Все четверти")] + [
             dropdown.Option(q.get("name", "")) for q in self.quarters_data
         ]
         self.quarter_dropdown.options = quarter_options
         self.journal_quarter_dropdown.options = quarter_options
+        self.topics_quarter_dropdown.options = quarter_options
 
         # Auto-detect current quarter based on date
         current_quarter_name = self._detect_current_quarter()
         if current_quarter_name:
             self.quarter_dropdown.value = current_quarter_name
             self.journal_quarter_dropdown.value = current_quarter_name
+            self.topics_quarter_dropdown.value = current_quarter_name
             self._log_message(f"Автоопределение: текущая четверть — {current_quarter_name}")
 
         msg = f"Загружено: {len(self.groups_data)} классов, {len(self.teacher_subjects)} предметов"
@@ -2124,8 +2436,8 @@ class EdonishAutoApp:
         if not cell:
             return
 
+        # Visual feedback only
         cell.border_color = ft.Colors.ORANGE_400
-        self.page.update()
 
         def do_set():
             try:
@@ -2135,7 +2447,7 @@ class EdonishAutoApp:
                     try:
                         self.api.delete_mark(mark_id=existing_mark_id)
                     except Exception:
-                        pass  # Old mark may not exist or already deleted
+                        pass
                 result = self.api.create_mark(
                     student_id=data["student_id"],
                     assignment_date_id=data["date_id"],
@@ -2146,20 +2458,29 @@ class EdonishAutoApp:
                     data["current_value"] = str(grade)
                     data["original_value"] = str(grade)
                     data["mark_id"] = result.get("assignmentMarkId", "") if isinstance(result, dict) else ""
-                    cell.value = str(grade)
-                    cell.bgcolor = ft.Colors.GREEN_50
-                    cell.border_color = ft.Colors.TRANSPARENT
-                    self._log_message(f"Оценка {grade} поставлена (строка {row + 1})")
-                    # Move to next cell
-                    self._move_to_cell(row, col + 1)
+                    # Update UI in background thread
+                    def update_ui():
+                        cell.value = str(grade)
+                        cell.border_color = ft.Colors.TRANSPARENT
+                        # Force background color update
+                        if hasattr(cell, 'bgcolor'):
+                            cell.bgcolor = ft.Colors.GREEN_50
+                        self._log_message(f"Оценка {grade} поставлена (строка {row + 1})")
+                        self._move_to_cell(row, col + 1)
+                        self._safe_update()
+                    self.page.run_thread(update_ui)
                 else:
-                    cell.border_color = ft.Colors.RED_400
-                    self._log_message(f"Ошибка установки оценки: {result}", "error")
+                    def update_error():
+                        cell.border_color = ft.Colors.RED_400
+                        self._log_message(f"Ошибка установки оценки", "error")
+                        self._safe_update()
+                    self.page.run_thread(update_error)
             except Exception as ex:
-                cell.border_color = ft.Colors.RED_400
-                self._log_message(f"Ошибка: {ex}", "error")
-            finally:
-                self.page.run_thread(self._safe_update)
+                def update_error():
+                    cell.border_color = ft.Colors.RED_400
+                    self._log_message(f"Ошибка: {ex}", "error")
+                    self._safe_update()
+                self.page.run_thread(update_error)
 
         threading.Thread(target=do_set, daemon=True).start()
 
@@ -2176,29 +2497,39 @@ class EdonishAutoApp:
         mark_id = data.get("mark_id", "")
         if not mark_id:
             # No grade to delete — just clear the cell visually
-            cell.value = ""
-            data["current_value"] = ""
-            self.page.update()
-            return
-
-        cell.border_color = ft.Colors.RED_400
-        self.page.update()
-
-        def do_delete():
-            try:
-                result = self.api.delete_mark(mark_id=mark_id)
+            def clear_ui():
                 cell.value = ""
                 cell.bgcolor = ft.Colors.GREY_50 if row % 2 == 0 else ft.Colors.SURFACE
                 cell.border_color = ft.Colors.TRANSPARENT
                 data["current_value"] = ""
                 data["original_value"] = ""
                 data["mark_id"] = ""
-                self._log_message(f"Оценка удалена (строка {row + 1}, столбец {col + 1})")
+                self._safe_update()
+            self.page.run_thread(clear_ui)
+            return
+
+        # Visual feedback
+        cell.border_color = ft.Colors.RED_400
+
+        def do_delete():
+            try:
+                result = self.api.delete_mark(mark_id=mark_id)
+                def update_ui():
+                    cell.value = ""
+                    cell.bgcolor = ft.Colors.GREY_50 if row % 2 == 0 else ft.Colors.SURFACE
+                    cell.border_color = ft.Colors.TRANSPARENT
+                    data["current_value"] = ""
+                    data["original_value"] = ""
+                    data["mark_id"] = ""
+                    self._log_message(f"Оценка удалена (строка {row + 1})")
+                    self._safe_update()
+                self.page.run_thread(update_ui)
             except Exception as ex:
-                cell.border_color = ft.Colors.RED_400
-                self._log_message(f"Ошибка удаления: {ex}", "error")
-            finally:
-                self.page.run_thread(self._safe_update)
+                def update_error():
+                    cell.border_color = ft.Colors.RED_400
+                    self._log_message(f"Ошибка удаления: {ex}", "error")
+                    self._safe_update()
+                self.page.run_thread(update_error)
 
         threading.Thread(target=do_delete, daemon=True).start()
 
@@ -2732,7 +3063,6 @@ class EdonishAutoApp:
             return
 
         # Find all cells that have been modified but not yet saved
-        # Compare cell display value against original_value (what was loaded from server)
         modified_cells = []
         for (row, col), data in self._grade_data.items():
             cell = self._grade_cells.get((row, col))
@@ -2740,17 +3070,14 @@ class EdonishAutoApp:
                 continue
             cell_value = (cell.value or "").strip()
             original_value = data.get("original_value", "")
-            # Check if the cell value differs from the originally loaded value
             if cell_value and cell_value.isdigit():
                 grade = int(cell_value)
                 if MIN_GRADE <= grade <= MAX_GRADE and cell_value != original_value:
                     modified_cells.append((row, col, grade))
             elif not cell_value and original_value:
-                # Cell was cleared — delete the grade
                 modified_cells.append((row, col, None))
 
         if not modified_cells:
-            # Also try the currently selected cell
             if self._selected_cell:
                 row, col = self._selected_cell
                 cell = self._grade_cells.get((row, col))
@@ -2760,31 +3087,44 @@ class EdonishAutoApp:
                         grade = int(val.strip())
                         if MIN_GRADE <= grade <= MAX_GRADE:
                             self._set_cell_grade(row, col, grade)
-                            self._show_snackbar(f"Оценка {grade} сохранена")
+                            self._show_snackbar(f"✅ Оценка {grade} сохранена")
                             return
-            self._show_snackbar("Нет изменений для сохранения")
+            self._show_snackbar("ℹ Нет изменений для сохранения")
             return
 
-        # Save all modified cells
+        # Save all modified cells with progress
         save_count = 0
         delete_count = 0
-        for row, col, grade in modified_cells:
+        total = len(modified_cells)
+        
+        for i, (row, col, grade) in enumerate(modified_cells):
             if grade is None:
-                # Delete the grade
                 self._delete_cell_grade(row, col)
                 delete_count += 1
             else:
                 self._set_cell_grade(row, col, grade)
                 save_count += 1
-            time.sleep(0.15)  # Small delay between saves to avoid API rate limiting
+            
+            # Show progress for large batches
+            if total > 10 and (i + 1) % 10 == 0:
+                self._show_snackbar(f"⏳ Сохранено: {i + 1}/{total}")
+            
+            time.sleep(0.15)
 
-        parts = []
-        if save_count:
-            parts.append(f"{save_count} сохранено")
-        if delete_count:
-            parts.append(f"{delete_count} удалено")
-        if parts:
-            self._show_snackbar(", ".join(parts))
+        # Final success message
+        if save_count > 0 or delete_count > 0:
+            if total == 1:
+                if save_count:
+                    self._show_snackbar(f"✅ Оценка сохранена")
+                else:
+                    self._show_snackbar(f"✅ Оценка удалена")
+            else:
+                msg = f"✅ Сохранено: {save_count}"
+                if delete_count:
+                    msg += f", удалено: {delete_count}"
+                self._show_snackbar(msg)
+        else:
+            self._show_snackbar("ℹ Ничего не сохранено")
 
     def _show_snackbar(self, message: str):
         try:

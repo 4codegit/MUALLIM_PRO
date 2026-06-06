@@ -116,6 +116,12 @@ class EdonishAPI:
             self.role = "teacher"
             self.role_prefix = API_PREFIXES["teacher"]
 
+    @property
+    def has_school_admin_rights(self) -> bool:
+        """Check if user has school_admin capabilities (granted to teachers)."""
+        # Teachers automatically get school_admin rights
+        return self.role in ("teacher", "classroom-teacher", "school_admin")
+
     def _refresh_auth(self) -> bool:
         """Refresh the JWT token using the refresh token."""
         if not self.refresh_token:
@@ -333,6 +339,53 @@ class EdonishAPI:
             "GET",
             self._url(TEACHER_SUBJECT, use_role_prefix=False),
             params={"school_id": self.school_id, "lang": lang},
+        )
+
+    def get_all_school_subjects(self, lang: int = LANG_RU) -> List[Dict]:
+        """Get all subjects available in the school (school_admin capability)."""
+        if not self.has_school_admin_rights:
+            return self.get_teacher_subjects(lang)
+        return self._request(
+            "GET",
+            f"{API_BASE}/school_admin/v1/subjects",
+            params={"school_id": self.school_id, "lang": lang},
+        )
+
+    def create_subject(self, name: str, lang: int = LANG_RU) -> Optional[Dict]:
+        """Create a new subject (school_admin capability)."""
+        if not self.has_school_admin_rights:
+            logger.warning("No school_admin rights to create subject")
+            return None
+        body = {"name": name, "school_id": self.school_id}
+        return self._request(
+            "POST",
+            f"{API_BASE}/school_admin/v1/subjects",
+            params={"lang": lang},
+            json=body,
+        )
+
+    def create_group(self, name: str, number: str, lang: int = LANG_RU) -> Optional[Dict]:
+        """Create a new class/group (school_admin capability)."""
+        if not self.has_school_admin_rights:
+            logger.warning("No school_admin rights to create group")
+            return None
+        body = {"name": name, "number": number, "school_id": self.school_id}
+        return self._request(
+            "POST",
+            f"{API_BASE}/school_admin/v1/groups",
+            params={"lang": lang},
+            json=body,
+        )
+
+    def delete_group(self, group_id: int, lang: int = LANG_RU) -> Optional[Dict]:
+        """Delete a class/group (school_admin capability)."""
+        if not self.has_school_admin_rights:
+            logger.warning("No school_admin rights to delete group")
+            return None
+        return self._request(
+            "DELETE",
+            f"{API_BASE}/school_admin/v1/groups/{group_id}",
+            params={"lang": lang},
         )
 
     def create_comment(
