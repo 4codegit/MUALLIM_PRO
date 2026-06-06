@@ -2524,20 +2524,14 @@ class EdonishAutoApp:
 
         self._log_message(f"Журнал загружен: {total_marks} оценок, {empty_cells} пустых")
 
-        # Update topics display
-        self._update_topics_display()
-
         # Update dashboard keyboard handler to include grid navigation
         self.page.on_keyboard_event = self._on_dashboard_keyboard
 
-        # Use run_thread for page update to prevent UI freezing
+        # Single batch update at the end
         try:
-            self.page.run_thread(lambda: self.page.update())
+            self.page.update()
         except Exception:
-            try:
-                self.page.update()
-            except Exception:
-                pass
+            pass
 
     def _make_grade_cell(self, row, col, value, mark_id, student_id, date_id, qprop_id):
         """Create a single editable grade cell (TextField)."""
