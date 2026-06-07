@@ -523,14 +523,14 @@ class EdonishAutoApp:
                 badge = Container(
                     content=Text("ваша", size=9, color=ft.Colors.GREEN_700),
                     bgcolor=ft.Colors.GREEN_50,
-                    padding=ft.padding.symmetric(4, 6),
+                    padding=ft.padding.all(6),
                     border_radius=4,
                 )
             else:
                 badge = Container(
                     content=Text("выбрать", size=9, color=ft.Colors.ORANGE_700),
                     bgcolor=ft.Colors.ORANGE_50,
-                    padding=ft.padding.symmetric(4, 6),
+                    padding=ft.padding.all(6),
                     border_radius=4,
                 )
             
