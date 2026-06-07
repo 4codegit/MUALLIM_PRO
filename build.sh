@@ -8,11 +8,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="3.7.0"
 APP_NAME="edonish-auto"
 APP_TITLE="eDonish Auto"
 DIST_DIR="$SCRIPT_DIR/dist"
 BUILD_DIR="$SCRIPT_DIR/build"
+
+# ── Read version dynamically from config.py ────────────────────────
+VERSION="$(python3 -c "import sys; sys.path.insert(0, '$SCRIPT_DIR'); from config import APP_VERSION; print(APP_VERSION)" 2>/dev/null || echo "3.20.0")"
+log "Version from config.py: $VERSION"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -160,9 +163,9 @@ build_windows() {
 
 _create_windows_installer_script() {
     mkdir -p "$DIST_DIR/windows"
-    cat > "$DIST_DIR/windows/installer.nsi" << 'NSIS_EOF'
+    cat > "$DIST_DIR/windows/installer.nsi" << NSIS_EOF
 !define APPNAME "eDonish Auto"
-!define APPVERSION "2.0.0"
+!define APPVERSION "${VERSION}"
 !define APPEXE "edonish-auto.exe"
 
 Name "${APPNAME} ${APPVERSION}"
@@ -232,10 +235,12 @@ build_macos() {
 
 _create_macos_dmg_script() {
     mkdir -p "$DIST_DIR/macos"
-    cat > "$DIST_DIR/macos/build_dmg.sh" << 'DMGEOF'
+    cat > "$DIST_DIR/macos/build_dmg.sh" << DMGEOF
 #!/bin/bash
 set -e
-VERSION="3.7.0"
+SCRIPT_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
+# Read version from config.py dynamically
+VERSION="\$(python3 -c "import sys; sys.path.insert(0, '\$SCRIPT_DIR/../..'); from config import APP_VERSION; print(APP_VERSION)" 2>/dev/null || echo '${VERSION}')"
 APP_NAME="edonish-auto"
 APP_TITLE="eDonish Auto"
 

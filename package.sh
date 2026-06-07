@@ -4,7 +4,6 @@
 # ════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-VERSION="3.17.0"
 APP_NAME="edonish-auto"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -16,6 +15,10 @@ NC='\033[0m'
 log() { echo -e "${CYAN}[PKG]${NC} $*"; }
 ok()  { echo -e "${GREEN}[OK]${NC} $*"; }
 err() { echo -e "${RED}[ERR]${NC} $*"; }
+
+# ── Read version dynamically from config.py ────────────────────────
+VERSION="$(python3 -c "import sys; sys.path.insert(0, '$SCRIPT_DIR'); from config import APP_VERSION; print(APP_VERSION)" 2>/dev/null || echo "3.20.0")"
+log "Version from config.py: $VERSION"
 
 # ── RPM Package ────────────────────────────────────────────────────
 build_rpm() {
@@ -42,8 +45,9 @@ build_rpm() {
     tar czf "$RPMBUILD/SOURCES/${APP_NAME}-${VERSION}.tar.gz" "${APP_NAME}-${VERSION}"
     cd "$SCRIPT_DIR"
 
-    # Copy spec file
+    # Copy spec file — update Version dynamically to match config.py
     cp edonish-auto.spec.rpm "$RPMBUILD/SPECS/edonish-auto.spec"
+    sed -i "s/^Version:.*/Version:        ${VERSION}/" "$RPMBUILD/SPECS/edonish-auto.spec"
 
     # Build
     rpmbuild -bb \

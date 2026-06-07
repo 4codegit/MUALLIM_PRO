@@ -1,5 +1,5 @@
 Name:           edonish-auto
-Version:        3.17.0
+Version:        3.20.0
 Release:        1%{?dist}
 Summary:        Automated grade management for edonish.tj electronic journal
 
@@ -59,6 +59,15 @@ EOF
 %{_datadir}/applications/%{name}.desktop
 
 %changelog
+* Sat Jun 07 2026 Kamar Narziev <kamar@edonish.tj> - 3.20.0-1
+- Fixed version mismatch across Linux packages (RPM/DEB now dynamic)
+- All version files synced to read from config.py dynamically
+- Random grade button per student row in journal
+- Fractional grades (1/2, 0/2) now show numerator only
+- Desktop AppBar avatar with role switching
+- Mobile horizontal scroll for journal table
+- Role permissions fixed: can_modify_grades checks ALL roles
+
 * Wed Jun 03 2026 Kamar Narziev <kamar@edonish.tj> - 3.13.0-1
 - Fixed dropdown on_select handlers for auto-grade page
 - Fixed class selection filtering subjects

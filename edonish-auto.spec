@@ -181,6 +181,12 @@ exe = EXE(
     icon=None,
 )
 
+# ── Read version from config.py ──────────────────────────────────
+try:
+    from config import APP_VERSION as _APP_VERSION
+except ImportError:
+    _APP_VERSION = '3.20.0'
+
 # ── macOS: .app bundle ──────────────────────────────────────────
 if sys.platform == 'darwin':
     app = BUNDLE(
@@ -191,8 +197,8 @@ if sys.platform == 'darwin':
         info_plist={
             'CFBundleName': 'eDonish Auto',
             'CFBundleDisplayName': 'eDonish Auto',
-            'CFBundleVersion': '3.17.0',
-            'CFBundleShortVersionString': '3.17.0',
+            'CFBundleVersion': _APP_VERSION,
+            'CFBundleShortVersionString': _APP_VERSION,
             'NSHighResolutionCapable': True,
             'LSMinimumSystemVersion': '10.13',
         },
