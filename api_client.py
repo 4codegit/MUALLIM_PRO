@@ -364,8 +364,14 @@ class EdonishAPI:
 
         In the 10-point system, mark_type_id must equal the actual grade value
         (e.g. mark=7 → mark_type_id=7), similar to how quarter marks use mark_id=mark.
+        
+        For Н/А (Не аттестован), mark=0 and mark_type_id=1 (edonish convention).
         """
-        effective_mark_type_id = mark_type_id if mark_type_id is not None else mark
+        # Н/А: mark=0, mark_type_id=1 (edonish uses 1/2 shortName pattern for Н/А)
+        if mark == 0:
+            effective_mark_type_id = 1  # Н/А mark type in edonish
+        else:
+            effective_mark_type_id = mark_type_id if mark_type_id is not None else mark
         body = {
             "mark_type_id": effective_mark_type_id,
             "group_subgroup_student_id": student_id,

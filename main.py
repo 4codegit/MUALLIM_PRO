@@ -813,6 +813,11 @@ class EdonishAutoApp:
             label="Четвертные оценки",
             value=True,
         )
+        self.na_grade_check = Checkbox(
+            label="Добавлять Н/А (рандом)",
+            value=True,
+            tooltip="Включать оценку Н/А (Не аттестован) при случайной генерации оценок",
+        )
         self.signature_check = Checkbox(
             label="Добавить подпись",
             value=False,
@@ -843,7 +848,7 @@ class EdonishAutoApp:
                             Column([self.subject_dropdown, Container(height=12),
                                 Row([self.min_grade_field, Text("—", size=20, weight=FontWeight.BOLD), self.max_grade_field], alignment=MainAxisAlignment.START, spacing=8),
                                 Container(height=12),
-                                Column([self.fill_empty_check, self.quarter_marks_check, self.signature_check, self.signature_field]),
+                                Column([self.fill_empty_check, self.quarter_marks_check, self.na_grade_check, self.signature_check, self.signature_field]),
                             ]),
                         ], alignment=MainAxisAlignment.START),
                     ],
@@ -2306,6 +2311,7 @@ class EdonishAutoApp:
                     min_grade=min_grade,
                     max_grade=max_grade,
                     fill_empty_only=self.fill_empty_check.value,
+                    include_na=self.na_grade_check.value if hasattr(self, 'na_grade_check') else True,
                 )
 
                 self._current_plan = plan
@@ -2351,7 +2357,7 @@ class EdonishAutoApp:
             lines.append(f"  {key}")
             lines.append(f"    Оценок: {len(tasks)}")
             for t in tasks[:5]:
-                lines.append(f"    - {t.student_name} -> {t.mark} ({t.date_str})")
+                lines.append(f"    - {t.student_name} -> {'Н/А' if t.mark == 0 else t.mark} ({t.date_str})")
             if len(tasks) > 5:
                 lines.append(f"    ... и ещё {len(tasks) - 5}")
             lines.append("")
@@ -2765,13 +2771,10 @@ class EdonishAutoApp:
             for col_idx, d in enumerate(dates):
                 date_id = d["assignmentDateId"]
                 mark_info = marks_by_date.get(date_id)
-                # Extract numeric grade from shortName (e.g., "1/2" -> "1", "0/2" -> "0")
+                # Extract grade from shortName — filter out fractional format like "1/2", "0/2"
                 mark_value_raw = mark_info.get("shortName", "") if mark_info else ""
-                # Parse grade - take only the first number before "/" or whole string if no "/"
-                if mark_value_raw and "/" in mark_value_raw:
-                    mark_value = mark_value_raw.split("/")[0]
-                else:
-                    mark_value = mark_value_raw
+                # Parse grade: fractional "X/Y" -> show numerator only (0 -> "Н/А", 1+ -> number)
+                mark_value = self._parse_grade_display(mark_value_raw)
                 mark_id = mark_info.get("assignmentMarkId", "") if mark_info else ""
                 qprop_id = d.get("quarterPropertyId", self._current_journal_params.get("qprop_id", 0))
                 full_date = d.get("assignmentDate", "")[:10]
@@ -2802,11 +2805,8 @@ class EdonishAutoApp:
             quarter_mark_id = ""
             if quarter_mark_list and len(quarter_mark_list) > 0:
                 quarter_mark_val_raw = quarter_mark_list[0].get("shortName", "")
-                # Parse grade - take only the first number before "/"
-                if quarter_mark_val_raw and "/" in quarter_mark_val_raw:
-                    quarter_mark_val = quarter_mark_val_raw.split("/")[0]
-                else:
-                    quarter_mark_val = quarter_mark_val_raw
+                # Parse grade: filter fractional format, convert 0 -> "Н/А"
+                quarter_mark_val = self._parse_grade_display(quarter_mark_val_raw)
                 quarter_mark_id = quarter_mark_list[0].get("quarterMarkId", "") or quarter_mark_list[0].get("assignmentMarkId", "")
 
             # Store quarter data for this student
@@ -2823,7 +2823,7 @@ class EdonishAutoApp:
             grade_values = []
             for m in (s.get("subjectMarks") or []):
                 sn = m.get("shortName", "")
-                # Parse grade - take only the first number before "/"
+                # Parse grade: filter fractional format
                 if sn and "/" in sn:
                     sn = sn.split("/")[0]
                 if sn and sn.isdigit():
@@ -2839,9 +2839,16 @@ class EdonishAutoApp:
                 quarter_tooltip = "Нет оценок для расчёта"
 
             # Clickable quarter mark cell
-            quarter_bgcolor = ft.Colors.AMBER_50 if quarter_mark_val else (ft.Colors.GREY_50 if row_idx % 2 == 0 else ft.Colors.SURFACE)
+            is_na_quarter = quarter_mark_val == "Н/А"
+            if is_na_quarter:
+                quarter_bgcolor = ft.Colors.RED_50
+            elif quarter_mark_val:
+                quarter_bgcolor = ft.Colors.AMBER_50
+            else:
+                quarter_bgcolor = ft.Colors.GREY_50 if row_idx % 2 == 0 else ft.Colors.SURFACE
             quarter_cell = Container(
-                content=Text(quarter_mark_val, size=14, weight=FontWeight.W_500, text_align=TextAlign.CENTER),
+                content=Text(quarter_mark_val, size=14, weight=FontWeight.W_500, text_align=TextAlign.CENTER,
+                             color=ft.Colors.RED_700 if is_na_quarter else None),
                 width=44,
                 padding=2,
                 bgcolor=quarter_bgcolor,
@@ -2860,17 +2867,16 @@ class EdonishAutoApp:
                 mark_val = ""
                 if mark_list and len(mark_list) > 0:
                     mark_val_raw = mark_list[0].get("shortName", "")
-                    # Parse grade - take only the first number before "/"
-                    if mark_val_raw and "/" in mark_val_raw:
-                        mark_val = mark_val_raw.split("/")[0]
-                    else:
-                        mark_val = mark_val_raw
+                    # Parse grade: filter fractional format, convert 0 -> "Н/А"
+                    mark_val = self._parse_grade_display(mark_val_raw)
+                is_na_mark = mark_val == "Н/А"
                 row_cells.append(
                     Container(
-                        content=Text(mark_val, size=14, weight=FontWeight.W_500, text_align=TextAlign.CENTER),
+                        content=Text(mark_val, size=14, weight=FontWeight.W_500, text_align=TextAlign.CENTER,
+                                     color=ft.Colors.RED_700 if is_na_mark else None),
                         width=44,
                         padding=2,
-                        bgcolor=ft.Colors.GREY_50 if row_idx % 2 == 0 else ft.Colors.SURFACE,
+                        bgcolor=ft.Colors.RED_50 if is_na_mark else (ft.Colors.GREY_50 if row_idx % 2 == 0 else ft.Colors.SURFACE),
                         border=Border(
                             right=BorderSide(1, ft.Colors.OUTLINE_VARIANT),
                             bottom=BorderSide(1, ft.Colors.OUTLINE_VARIANT),
@@ -2897,7 +2903,7 @@ class EdonishAutoApp:
         # Help text
         student_rows.append(Container(height=4))
         student_rows.append(Text(
-            "Стрелки: навигация | Цифра 3-10: поставить оценку | Delete: удалить | 🎲: рандом | Клик на Чтв: ceil(средний балл)",
+            "Стрелки: навигация | Цифра 3-10: оценка | Н/А: не аттестован | Delete: удалить | 🎲: рандом | Чтв: ceil(ср.)",
             size=11, color=ft.Colors.GREY_400,
         ))
 
@@ -2920,10 +2926,47 @@ class EdonishAutoApp:
         except Exception:
             pass
 
+    def _parse_grade_display(self, short_name: str) -> str:
+        """Parse a grade shortName from the edonish API into display format.
+        
+        Handles fractional grades like "1/2", "0/2" by extracting the numerator.
+        A numerator of 0 means Н/А (Не аттестован) — displayed as "Н/А".
+        Non-fractional grades like "3", "7", "10" are kept as-is.
+        Special values like "Н/А" are kept as-is.
+        """
+        if not short_name or not short_name.strip():
+            return ""
+        short_name = short_name.strip()
+        
+        # Already Н/А
+        if short_name in ("Н/А", "Н/A", "н/а", "N/A", "n/a"):
+            return "Н/А"
+        
+        # Fractional format: "X/Y" -> extract numerator
+        if "/" in short_name:
+            numerator = short_name.split("/")[0].strip()
+            if numerator == "0":
+                return "Н/А"
+            elif numerator.isdigit():
+                return numerator
+            else:
+                return short_name  # Fallback: show as-is
+        
+        # Regular grade (e.g., "3", "7", "10")
+        return short_name
+
     def _make_grade_cell(self, row, col, value, mark_id, student_id, date_id, qprop_id, is_past_date=False):
-        """Create a single editable grade cell (TextField)."""
+        """Create a single editable grade cell (TextField).
+        
+        Supports numeric grades (3-10) and Н/А (Не аттестован).
+        Н/А cells have a red-tinted background and different input filter.
+        """
         has_mark = bool(value and str(value).strip())
-        if is_past_date and has_mark:
+        is_na = str(value).strip() == "Н/А"
+        
+        if is_na:
+            cell_bgcolor = ft.Colors.RED_50
+        elif is_past_date and has_mark:
             cell_bgcolor = ft.Colors.ORANGE_100
         elif is_past_date:
             cell_bgcolor = ft.Colors.ORANGE_50
@@ -2932,7 +2975,7 @@ class EdonishAutoApp:
         else:
             cell_bgcolor = ft.Colors.GREY_50 if row % 2 == 0 else ft.Colors.SURFACE
 
-        # Store data for this cell
+        # Store data for this cell — for Н/А, store raw value 0
         self._grade_data[(row, col)] = {
             "mark_id": mark_id,
             "student_id": student_id,
@@ -2941,6 +2984,7 @@ class EdonishAutoApp:
             "current_value": value,
             "original_value": value,
             "is_past_date": is_past_date,
+            "is_na": is_na,
         }
 
         # Mobile-friendly cell size
@@ -2951,16 +2995,17 @@ class EdonishAutoApp:
             value=str(value) if value else "",
             width=cell_width,
             height=38,
-            text_size=text_size,
+            text_size=text_size if not is_na else (13 if not self._is_mobile else 11),
             text_align=TextAlign.CENTER,
             text_vertical_align=ft.VerticalAlignment.CENTER,
             border_radius=4,
             border_color=ft.Colors.TRANSPARENT,
-            focused_border_color=ft.Colors.BLUE_600,
+            focused_border_color=ft.Colors.RED_400 if is_na else ft.Colors.BLUE_600,
             content_padding=ft.controls.padding.Padding(left=2, right=2, top=4, bottom=4),
             bgcolor=cell_bgcolor,
-            input_filter=ft.NumbersOnlyInputFilter(),
-            max_length=2,
+            input_filter=ft.NumbersOnlyInputFilter() if not is_na else None,
+            max_length=3 if is_na else 2,  # "Н/А" is 3 chars
+            color=ft.Colors.RED_700 if is_na else None,
             on_focus=lambda e, r=row, c=col: self._on_cell_focus(r, c),
             on_submit=lambda e, r=row, c=col: self._on_cell_submit(r, c, e),
             on_change=lambda e, r=row, c=col: self._on_cell_change(r, c, e),
@@ -2979,7 +3024,19 @@ class EdonishAutoApp:
         if not val or not val.strip():
             return
         digit = val.strip()
+        
+        # Check for Н/А input (user types "н", "на", "на", etc.)
+        na_variants = ("н/а", "н/a", "n/a", "на", "na")
+        if digit.lower() in na_variants:
+            # Submit Н/А grade
+            self._set_cell_grade(row, col, 0)  # 0 = Н/А
+            return
+        
         if not digit.isdigit():
+            # Allow typing Cyrillic/Latin letters for Н/А
+            na_chars = set("нНАнaA/")
+            if all(c in na_chars for c in digit):
+                return  # Wait — might be typing "Н/А"
             e.control.value = self._grade_data.get((row, col), {}).get("current_value", "")
             try:
                 self.page.update()
@@ -2996,7 +3053,7 @@ class EdonishAutoApp:
         elif grade > MAX_GRADE:
             # Too high — reject
             e.control.value = ""
-            self._show_snackbar(f"Оценка должна быть от {MIN_GRADE} до {MAX_GRADE}")
+            self._show_snackbar(f"Оценка должна быть от {MIN_GRADE} до {MAX_GRADE} или Н/А")
             try:
                 self.page.update()
             except Exception:
@@ -3006,7 +3063,7 @@ class EdonishAutoApp:
             pass
         elif grade < MIN_GRADE:
             e.control.value = ""
-            self._show_snackbar(f"Оценка должна быть от {MIN_GRADE} до {MAX_GRADE}")
+            self._show_snackbar(f"Оценка должна быть от {MIN_GRADE} до {MAX_GRADE} или Н/А")
             try:
                 self.page.update()
             except Exception:
@@ -3015,12 +3072,22 @@ class EdonishAutoApp:
     def _on_cell_submit(self, row, col, e):
         """Handle Enter key on a cell — submit the grade."""
         val = e.control.value
-        if val and val.strip() and val.strip().isdigit():
-            grade = int(val.strip())
+        if not val or not val.strip():
+            return
+        digit = val.strip()
+        
+        # Check for Н/А input
+        na_variants = ("н/а", "н/a", "n/a", "на", "na", "н/А", "Н/а", "Н/А", "Н/A")
+        if digit.lower().replace('А', 'а').replace('A', 'а') in ("н/а", "на", "n/a", "na"):
+            self._set_cell_grade(row, col, 0)  # 0 = Н/А
+            return
+        
+        if digit.isdigit():
+            grade = int(digit)
             if MIN_GRADE <= grade <= MAX_GRADE:
                 self._set_cell_grade(row, col, grade)
             else:
-                self._show_snackbar(f"Оценка должна быть от {MIN_GRADE} до {MAX_GRADE}")
+                self._show_snackbar(f"Оценка должна быть от {MIN_GRADE} до {MAX_GRADE} или Н/А")
                 e.control.value = self._grade_data[(row, col)].get("current_value", "")
                 self.page.update()
 
@@ -3044,7 +3111,7 @@ class EdonishAutoApp:
                 "warning"
             )
 
-        self._log_message(f"\u27a1\ufe0f Установка оценки {grade} в ячейке (строка {row + 1})")
+        self._log_message(f"\u27a1\ufe0f Установка оценки {'Н/А' if grade == 0 else grade} в ячейке (строка {row + 1})")
 
         # Visual feedback only
         cell.border_color = ft.Colors.ORANGE_400
@@ -3088,19 +3155,25 @@ class EdonishAutoApp:
                 )
                 
                 if result and not (isinstance(result, dict) and result.get("error")):
-                    data["current_value"] = str(grade)
-                    data["original_value"] = str(grade)
+                    display_val = "Н/А" if grade == 0 else str(grade)
+                    data["current_value"] = display_val
+                    data["original_value"] = display_val
+                    data["is_na"] = (grade == 0)
                     new_mark_id = result.get("assignmentMarkId", "") if isinstance(result, dict) else ""
                     data["mark_id"] = new_mark_id
                     self._log_message(f"  \u2705 Успех! Mark ID: {new_mark_id}")
                     
                     # Update UI in background thread
                     def update_ui():
-                        cell.value = str(grade)
+                        cell.value = display_val
                         cell.border_color = ft.Colors.TRANSPARENT
                         if hasattr(cell, 'bgcolor'):
-                            cell.bgcolor = ft.Colors.GREEN_50
-                        self._log_message(f"\u2705 Оценка {grade} поставлена (строка {row + 1})")
+                            cell.bgcolor = ft.Colors.RED_50 if grade == 0 else ft.Colors.GREEN_50
+                        if grade == 0:
+                            cell.color = ft.Colors.RED_700
+                        else:
+                            cell.color = None
+                        self._log_message(f"\u2705 Оценка {display_val} поставлена (строка {row + 1})")
                         self._move_to_cell(row, col + 1)
                         self._safe_update()
                     self.page.run_thread(update_ui)
@@ -3223,7 +3296,8 @@ class EdonishAutoApp:
                 self._show_snackbar("Нет дат для оценки")
                 return
 
-        grade = weighted_random_grade()
+        include_na = self.na_grade_check.value if hasattr(self, 'na_grade_check') else True
+        grade = weighted_random_grade(include_na=include_na)
         self._set_cell_grade(row, empty_col, grade)
 
     def _on_set_quarter_mark(self, row: int):
@@ -3268,6 +3342,12 @@ class EdonishAutoApp:
                 grade_values = []
                 for m in (student.get("subjectMarks") or []):
                     sn = m.get("shortName", "")
+                    # Parse grade: filter fractional format (0/X = Н/А, skip it)
+                    if sn and "/" in sn:
+                        numerator = sn.split("/")[0]
+                        if numerator == "0":
+                            continue  # Н/А — skip for average calculation
+                        sn = numerator
                     if sn and sn.isdigit():
                         v = int(sn)
                         if MIN_GRADE <= v <= MAX_GRADE:

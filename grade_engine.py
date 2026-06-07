@@ -12,16 +12,31 @@ from config import MIN_GRADE, MAX_GRADE, DEFAULT_WORKERS, DEFAULT_BATCH_SIZE
 logger = logging.getLogger("edonish_auto")
 
 
-def weighted_random_grade(min_grade: int = MIN_GRADE, max_grade: int = MAX_GRADE) -> int:
+def weighted_random_grade(min_grade: int = MIN_GRADE, max_grade: int = MAX_GRADE, include_na: bool = True) -> int:
     """
     Generate a weighted random grade.
     
     Uses a bell-curve-like distribution centered around 7-9,
     with lower probability for very low (3-4) or very high (10) grades.
     This produces more realistic grade distributions.
+    
+    When include_na=True, grade value 0 represents Н/А (Не аттестован)
+    with a small probability (~3%).
+    
+    Returns:
+        int: Grade value (0 for Н/А, or min_grade..max_grade for numeric grades)
     """
+    # Build grade options and weights
+    grades = []
     weights = []
+    
+    # Н/А option (mark value 0)
+    if include_na:
+        grades.append(0)  # 0 = Н/А
+        weights.append(1)  # ~3% probability
+    
     for g in range(min_grade, max_grade + 1):
+        grades.append(g)
         if g <= 4:
             w = 1   # rare low grades
         elif g == 5:
@@ -37,7 +52,7 @@ def weighted_random_grade(min_grade: int = MIN_GRADE, max_grade: int = MAX_GRADE
         else:  # 10
             w = 3  # rare perfect score
         weights.append(w)
-    return random.choices(range(min_grade, max_grade + 1), weights=weights, k=1)[0]
+    return random.choices(grades, weights=weights, k=1)[0]
 
 
 @dataclass
@@ -117,6 +132,7 @@ class GradeEngine:
         max_grade: int = MAX_GRADE,
         fill_empty_only: bool = True,
         grades_per_date: int = 1,
+        include_na: bool = True,
     ) -> GradePlan:
         """
         Build a complete plan of grades to create.
@@ -237,8 +253,8 @@ class GradeEngine:
                             if not fill_empty_only and date_id in existing_marks:
                                 existing_mark_id = existing_marks[date_id].get("assignmentMarkId", "")
 
-                            # Generate weighted random grade
-                            grade = weighted_random_grade(min_grade, max_grade)
+                            # Generate weighted random grade (0 = Н/А if include_na)
+                            grade = weighted_random_grade(min_grade, max_grade, include_na=include_na)
                             task = GradeTask(
                                 student_id=student_id,
                                 student_name=student_name,
@@ -326,6 +342,12 @@ class GradeEngine:
                         grade_values = []
                         for m in subject_marks:
                             sn = m.get("shortName", "")
+                            # Parse grade: filter fractional format (0/X = Н/А, skip)
+                            if sn and "/" in sn:
+                                numerator = sn.split("/")[0]
+                                if numerator == "0":
+                                    continue  # Н/А — skip for average calculation
+                                sn = numerator
                             if sn and sn.isdigit():
                                 v = int(sn)
                                 if MIN_GRADE <= v <= MAX_GRADE:
@@ -337,7 +359,7 @@ class GradeEngine:
                             self._log(f"  📊 {student_name}: средний={avg:.2f} → ceil={grade} (из {len(grade_values)} оценок)")
                         else:
                             # No marks — fallback to weighted random
-                            grade = weighted_random_grade(min_grade, max_grade)
+                            grade = weighted_random_grade(min_grade, max_grade, include_na=False)
                             self._log(f"  ⚠️ {student_name}: нет оценок, рандом={grade}")
 
                         curriculum_property_id = subject.get("curriculumPropertyId", 0)
@@ -426,8 +448,9 @@ class GradeEngine:
                         task.result = result
                         completed += 1
                         plan.completed = completed
+                        display_mark = "Н/А" if task.mark == 0 else task.mark
                         self._log(
-                            f"  ✅ [{worker_id}] {task.student_name} -> {task.mark} "
+                            f"  ✅ [{worker_id}] {task.student_name} -> {display_mark} "
                             f"({task.date_str})"
                         )
                     else:
@@ -506,7 +529,7 @@ class GradeEngine:
                     task.status = "success"
                     completed += 1
                     plan.completed = completed
-                    self._log(f"  ✅ {task.student_name} -> {task.mark} ({task.date_str})")
+                    self._log(f"  ✅ {task.student_name} -> {'Н/А' if task.mark == 0 else task.mark} ({task.date_str})")
                 else:
                     task.status = "error"
                     failed += 1
