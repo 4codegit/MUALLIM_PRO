@@ -60,45 +60,38 @@ jobs:
           pip install flet>=0.85.0 flet-desktop>=0.85.0 requests pyinstaller certifi
         shell: pwsh
 
-      - name: Pre-cache Flet client (with retry)
-        shell: pwsh
+      - name: Pre-cache Flet client and build GUI (with retry)
+        shell: bash
         run: |
-          $ErrorActionPreference = "Continue"
-          $maxRetries = 5
-          $delay = 30
-          for ($i = 1; $i -le $maxRetries; $i++) {
-            Write-Host "Attempt $i of $maxRetries: Caching Flet client..."
-            $output = & python -c "import flet_desktop; flet_desktop.ensure_client_cached()" 2>&1
-            Write-Host $output
-            if ($LASTEXITCODE -eq 0) {
-              Write-Host "Flet client cached successfully!"
+          max_retries=5
+          delay=30
+          for i in $(seq 1 $max_retries); do
+            echo "Attempt $i of $max_retries: Caching Flet client..."
+            if python -c "import flet_desktop; flet_desktop.ensure_client_cached()"; then
+              echo "Flet client cached successfully!"
               break
-            }
-            Write-Host "Attempt $i failed (exit code: $LASTEXITCODE)"
-            if ($i -lt $maxRetries) {
-              Write-Host "Retrying in $delay seconds..."
-              Start-Sleep -Seconds $delay
-              $delay = $delay * 2
-            } else {
-              Write-Host "All $maxRetries attempts failed!"
-              exit 1
-            }
-          }
-
-      - name: Build GUI executable with flet pack
-        run: |
-          $certifiDir = python -c "import certifi; import os; print(os.path.dirname(certifi.__file__))"
-          flet pack main.py --name edonish-auto `
-            --hidden-import requests `
-            --hidden-import urllib3 `
-            --hidden-import urllib3.util `
-            --hidden-import certifi `
-            --hidden-import charset_normalizer `
-            --hidden-import idna `
-            --hidden-import darkdetect `
-            --hidden-import packaging `
-            --add-data "${certifiDir}:certifi"
-        shell: pwsh
+            fi
+            echo "Attempt $i failed."
+            if [ $i -lt $max_retries ]; then
+              echo "Retrying in $delay seconds..."
+              sleep $delay
+              delay=$((delay * 2))
+            else
+              echo "All $max_retries pre-cache attempts failed. Will try flet pack anyway..."
+            fi
+          done
+          echo "Building GUI executable..."
+          certifi_dir=$(python -c "import certifi; import os; print(os.path.dirname(certifi.__file__))")
+          flet pack main.py --name edonish-auto \
+            --hidden-import requests \
+            --hidden-import urllib3 \
+            --hidden-import urllib3.util \
+            --hidden-import certifi \
+            --hidden-import charset_normalizer \
+            --hidden-import idna \
+            --hidden-import darkdetect \
+            --hidden-import packaging \
+            --add-data "${certifi_dir}:certifi"
 
       - name: Prepare dist directory
         run: |
