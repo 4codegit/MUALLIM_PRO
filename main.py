@@ -374,6 +374,11 @@ class EdonishAutoApp:
             bgcolor=ft.Colors.SURFACE,
             actions=[
                 IconButton(
+                    icon=Icons.SWAP_HORIZ,
+                    tooltip="Сменить роль",
+                    on_click=self._show_role_switcher,
+                ),
+                IconButton(
                     icon=Icons.PERSON,
                     tooltip="Профиль",
                     on_click=self._show_user_info,
@@ -715,6 +720,7 @@ class EdonishAutoApp:
                 *role_display_rows,
             ], spacing=6, scroll=ScrollMode.AUTO),
             actions=[
+                TextButton("Сменить роль", on_click=lambda _: self._close_dialog_and_switch_role()),
                 TextButton("OK", on_click=lambda _: self.page.dialog.close()),
             ],
         )
