@@ -1509,7 +1509,7 @@ class EdonishAutoApp:
         if not hasattr(self, '_dates_data') or not self._dates_data:
             self._show_snackbar("Сначала загрузите темы!")
             return
-        empty = [d for d in self._dates_data if not d.get("topic", "").strip()]
+        empty = [d for d in self._dates_data if not (d.get("topic") or "").strip()]
         if not empty:
             self._show_snackbar("Все даты имеют темы!")
             return
@@ -1537,7 +1537,7 @@ class EdonishAutoApp:
         if not hasattr(self, '_dates_data') or not self._dates_data:
             self._show_snackbar("Сначала загрузите темы!")
             return
-        empty = [d for d in self._dates_data if not d.get("homeWork", "").strip()]
+        empty = [d for d in self._dates_data if not (d.get("homeWork") or "").strip()]
         if not empty:
             self._show_snackbar("Все даты уже имеют ДЗ!")
             return
