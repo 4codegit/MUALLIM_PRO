@@ -101,7 +101,7 @@ DEFAULT_BATCH_SIZE = 4
 
 # App settings
 APP_NAME = "eDonish Auto"
-APP_VERSION = "3.21.1"
+APP_VERSION = "3.21.2"
 APP_AUTHOR = "Edonish Auto Team"
 
 # Session file — uses mobile-safe directory
