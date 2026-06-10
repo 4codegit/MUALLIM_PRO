@@ -1554,14 +1554,14 @@ class EdonishAutoApp:
                         if dates_data and dates_data[0].get("days"):
                             all_dates.extend(dates_data[0]["days"])
                     except Exception as e:
-                        self._log_message(f"Ошибка загрузки дат для {q.get('name', '?')}: {e}", "error")
+                        self.page.run_thread(lambda e=str(e): self._log_message(f"Ошибка загрузки дат: {e}", "error"))
 
                 # Sort by date
                 all_dates.sort(key=lambda d: d.get("assignmentDate") or "")
                 self.page.run_thread(lambda: self._display_topics_list(all_dates, is_flat=True))
             except Exception as e:
-                self._log_message(f"Ошибка загрузки тем: {e}", "error")
-                self.page.run_thread(lambda: self._on_topics_load_error(str(e)))
+                self.page.run_thread(lambda e=str(e): self._log_message(f"Ошибка загрузки тем: {e}", "error"))
+                self.page.run_thread(lambda e=str(e): self._on_topics_load_error(e))
         
         threading.Thread(target=load, daemon=True).start()
 
@@ -1610,6 +1610,7 @@ class EdonishAutoApp:
 
         semester_label = self.topics_semester_dropdown.value or "Весь год"
         semester_quarters = self._get_selected_semester_quarters()
+        self._show_snackbar(f"Заполнение тем ({semester_label})...")
         self._log_message(f"Загрузка дат для заполнения тем ({semester_label})...")
 
         def do_fill():
@@ -1629,10 +1630,11 @@ class EdonishAutoApp:
                         if dates_data and dates_data[0].get("days"):
                             all_dates.extend(dates_data[0]["days"])
                     except Exception as e:
-                        self._log_message(f"Ошибка загрузки дат для {q.get('name', '?')}: {e}", "error")
+                        self.page.run_thread(lambda e=str(e): self._log_message(f"Ошибка загрузки дат: {e}", "error"))
 
                 if not all_dates:
-                    self._log_message("Нет дат для заполнения тем!", "error")
+                    self.page.run_thread(lambda: self._log_message("Нет дат для заполнения тем!", "error"))
+                    self.page.run_thread(lambda: self._show_snackbar("Нет дат для заполнения тем!"))
                     return
 
                 # Sort by date
@@ -1648,14 +1650,20 @@ class EdonishAutoApp:
                             topic=topics[i]
                         )
                         filled += 1
+                        # Progress every 5 items
+                        if filled % 5 == 0:
+                            self.page.run_thread(lambda f=filled, t=to_fill: self._log_message(f"Прогресс: {f}/{t} тем"))
                         time.sleep(0.3)
                     except Exception as e:
-                        self._log_message(f"Ошибка: {e}", "error")
+                        self.page.run_thread(lambda e=str(e): self._log_message(f"Ошибка: {e}", "error"))
 
-                self._log_message(f"Заполнено тем: {filled}/{to_fill} (всего дат: {len(all_dates)})")
+                msg = f"Заполнено тем: {filled}/{to_fill} (всего дат: {len(all_dates)})"
+                self.page.run_thread(lambda m=msg: self._log_message(m))
+                self.page.run_thread(lambda m=msg: self._show_snackbar(m))
                 self._on_topics_load()
             except Exception as ex:
-                self._log_message(f"Ошибка: {ex}", "error")
+                self.page.run_thread(lambda e=str(ex): self._log_message(f"Ошибка: {e}", "error"))
+                self.page.run_thread(lambda e=str(ex): self._show_snackbar(f"Ошибка: {e}"))
 
         threading.Thread(target=do_fill, daemon=True).start()
 
@@ -1694,6 +1702,7 @@ class EdonishAutoApp:
 
         semester_label = self.topics_semester_dropdown.value or "Весь год"
         semester_quarters = self._get_selected_semester_quarters()
+        self._show_snackbar(f"Заполнение ДЗ ({semester_label})...")
         self._log_message(f"Загрузка дат для заполнения ДЗ ({semester_label})...")
 
         def do_fill():
@@ -1713,10 +1722,11 @@ class EdonishAutoApp:
                         if dates_data and dates_data[0].get("days"):
                             all_dates.extend(dates_data[0]["days"])
                     except Exception as e:
-                        self._log_message(f"Ошибка загрузки дат для {q.get('name', '?')}: {e}", "error")
+                        self.page.run_thread(lambda e=str(e): self._log_message(f"Ошибка загрузки дат: {e}", "error"))
 
                 if not all_dates:
-                    self._log_message("Нет дат для заполнения ДЗ!", "error")
+                    self.page.run_thread(lambda: self._log_message("Нет дат для заполнения ДЗ!", "error"))
+                    self.page.run_thread(lambda: self._show_snackbar("Нет дат для заполнения ДЗ!"))
                     return
 
                 # Sort by date
@@ -1732,14 +1742,19 @@ class EdonishAutoApp:
                             home_work=hws[i]
                         )
                         filled += 1
+                        if filled % 5 == 0:
+                            self.page.run_thread(lambda f=filled, t=to_fill: self._log_message(f"Прогресс: {f}/{t} ДЗ"))
                         time.sleep(0.3)
                     except Exception as e:
-                        self._log_message(f"Ошибка: {e}", "error")
+                        self.page.run_thread(lambda e=str(e): self._log_message(f"Ошибка: {e}", "error"))
 
-                self._log_message(f"Заполнено ДЗ: {filled}/{to_fill} (всего дат: {len(all_dates)})")
+                msg = f"Заполнено ДЗ: {filled}/{to_fill} (всего дат: {len(all_dates)})"
+                self.page.run_thread(lambda m=msg: self._log_message(m))
+                self.page.run_thread(lambda m=msg: self._show_snackbar(m))
                 self._on_topics_load()
             except Exception as ex:
-                self._log_message(f"Ошибка: {ex}", "error")
+                self.page.run_thread(lambda e=str(ex): self._log_message(f"Ошибка: {e}", "error"))
+                self.page.run_thread(lambda e=str(ex): self._show_snackbar(f"Ошибка: {e}"))
 
         threading.Thread(target=do_fill, daemon=True).start()
 
@@ -1780,6 +1795,7 @@ class EdonishAutoApp:
 
         semester_label = self.topics_semester_dropdown.value or "Весь год"
         semester_quarters = self._get_selected_semester_quarters()
+        self._show_snackbar(f"Загрузка тем и ДЗ ({semester_label})...")
         self._log_message(f"Загрузка дат для заполнения тем и ДЗ ({semester_label})...")
 
         def do_upload():
@@ -1799,10 +1815,11 @@ class EdonishAutoApp:
                         if dates_data and dates_data[0].get("days"):
                             all_dates.extend(dates_data[0]["days"])
                     except Exception as e:
-                        self._log_message(f"Ошибка загрузки дат для {q.get('name', '?')}: {e}", "error")
+                        self.page.run_thread(lambda e=str(e): self._log_message(f"Ошибка загрузки дат: {e}", "error"))
 
                 if not all_dates:
-                    self._log_message("Нет дат для заполнения!", "error")
+                    self.page.run_thread(lambda: self._log_message("Нет дат для заполнения!", "error"))
+                    self.page.run_thread(lambda: self._show_snackbar("Нет дат для заполнения!"))
                     return
 
                 # Sort by date
@@ -1828,16 +1845,20 @@ class EdonishAutoApp:
                             filled_topics += 1
                         if hw_text:
                             filled_hw += 1
+                        total_filled = filled_topics + filled_hw
+                        if total_filled % 5 == 0:
+                            self.page.run_thread(lambda f=total_filled, t=to_fill: self._log_message(f"Прогресс: {f}/{t}"))
                         time.sleep(0.3)
                     except Exception as e:
-                        self._log_message(f"Ошибка: {e}", "error")
+                        self.page.run_thread(lambda e=str(e): self._log_message(f"Ошибка: {e}", "error"))
 
-                self._log_message(
-                    f"Загружено: тем {filled_topics}, ДЗ {filled_hw} (всего дат: {len(all_dates)})"
-                )
+                msg = f"Загружено: тем {filled_topics}, ДЗ {filled_hw} (всего дат: {len(all_dates)})"
+                self.page.run_thread(lambda m=msg: self._log_message(m))
+                self.page.run_thread(lambda m=msg: self._show_snackbar(m))
                 self._on_topics_load()
             except Exception as ex:
-                self._log_message(f"Ошибка: {ex}", "error")
+                self.page.run_thread(lambda e=str(ex): self._log_message(f"Ошибка: {e}", "error"))
+                self.page.run_thread(lambda e=str(ex): self._show_snackbar(f"Ошибка: {e}"))
 
         threading.Thread(target=do_upload, daemon=True).start()
 
@@ -3996,13 +4017,15 @@ class EdonishAutoApp:
                     )
                     if result:
                         filled += 1
-                        self._log_message(f"  ✅ Тема {i + 1}: {topics_list[i][:50]}... → {empty_dates[i].get('assignmentDate', '')}")
+                        self.page.run_thread(lambda i=i, f=filled: self._log_message(f"  Тема {i + 1}: {topics_list[i][:50]}..."))
                     else:
-                        self._log_message(f"  ❌ Ошибка для даты {empty_dates[i].get('assignmentDate', '')}", "error")
+                        self.page.run_thread(lambda i=i: self._log_message(f"  Ошибка для даты {empty_dates[i].get('assignmentDate', '')}", "error"))
                     time.sleep(0.3)
                 except Exception as e:
-                    self._log_message(f"  ❌ Ошибка: {e}", "error")
-            self._log_message(f"✅ Темы заполнены: {filled}/{to_fill}")
+                    self.page.run_thread(lambda e=str(e): self._log_message(f"  Ошибка: {e}", "error"))
+            msg = f"Темы заполнены: {filled}/{to_fill}"
+            self.page.run_thread(lambda m=msg: self._log_message(m))
+            self.page.run_thread(lambda m=msg: self._show_snackbar(m))
             # Reload journal to refresh topics
             self._reload_journal()
 
@@ -4043,13 +4066,15 @@ class EdonishAutoApp:
                     )
                     if result:
                         filled += 1
-                        self._log_message(f"  ✅ ДЗ {i + 1}: {hw_list[i][:50]}... → {empty_dates[i].get('assignmentDate', '')}")
+                        self.page.run_thread(lambda i=i: self._log_message(f"  ДЗ {i + 1}: {hw_list[i][:50]}..."))
                     else:
-                        self._log_message(f"  ❌ Ошибка для даты {empty_dates[i].get('assignmentDate', '')}", "error")
+                        self.page.run_thread(lambda i=i: self._log_message(f"  Ошибка для даты {empty_dates[i].get('assignmentDate', '')}", "error"))
                     time.sleep(0.3)
                 except Exception as e:
-                    self._log_message(f"  ❌ Ошибка: {e}", "error")
-            self._log_message(f"✅ ДЗ заполнены: {filled}/{to_fill}")
+                    self.page.run_thread(lambda e=str(e): self._log_message(f"  Ошибка: {e}", "error"))
+            msg = f"ДЗ заполнены: {filled}/{to_fill}"
+            self.page.run_thread(lambda m=msg: self._log_message(m))
+            self.page.run_thread(lambda m=msg: self._show_snackbar(m))
             self._reload_journal()
 
         threading.Thread(target=do_fill, daemon=True).start()
