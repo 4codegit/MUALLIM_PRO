@@ -1312,7 +1312,11 @@ class EdonishAutoApp:
     # ════════════════════════════════════════════════════════════════
 
     def _build_topics_page(self):
-        """Topics and Homework management page."""
+        """Topics and Homework management page — semester-based, with simple Upload/View."""
+        # Build semester options from quarters_data
+        # Semester 1 = Quarter 1 + Quarter 2, Semester 2 = Quarter 3 + Quarter 4
+        self._semester_options = self._build_semester_options()
+
         self.topics_class_dropdown = Dropdown(
             label="Класс",
             width=200,
@@ -1325,32 +1329,32 @@ class EdonishAutoApp:
             options=[dropdown.Option("Все предметы")] + [dropdown.Option(s["subjectName"]) for s in self.teacher_subjects],
             value="Все предметы",
         )
-        self.topics_quarter_dropdown = Dropdown(
-            label="Четверть",
-            width=200,
-            options=[dropdown.Option("Все четверти")] + [dropdown.Option(q["name"]) for q in self.quarters_data],
-            value="Все четверти",
+        self.topics_semester_dropdown = Dropdown(
+            label="Период",
+            width=220,
+            options=[dropdown.Option(s["label"]) for s in self._semester_options],
+            value=self._semester_options[0]["label"] if self._semester_options else None,
         )
 
         self.topics_input = TextField(
-            label="Темы (по одной на строку)",
+            label="Темы уроков (по одной на строку)",
             multiline=True,
-            min_lines=6,
-            max_lines=15,
-            width=600,
+            min_lines=8,
+            max_lines=20,
+            expand=True,
             hint_text="Тема 1\nТема 2\n...",
         )
         self.hw_input = TextField(
-            label="ДЗ (по одной на строку)",
+            label="Домашние задания (по одной на строку)",
             multiline=True,
-            min_lines=6,
-            max_lines=15,
-            width=600,
+            min_lines=8,
+            max_lines=20,
+            expand=True,
             hint_text="ДЗ 1\nДЗ 2\n...",
         )
         
         self.topics_list_container = Container(
-            content=Text("Загрузите темы чтобы увидеть список", size=14, color=ft.Colors.GREY_500),
+            content=Text("Нажмите «Просмотр» чтобы увидеть текущие темы и ДЗ", size=14, color=ft.Colors.GREY_500),
         )
 
         self.topics_page = Column(
@@ -1371,34 +1375,61 @@ class EdonishAutoApp:
                                 Container(width=12),
                                 self.topics_subject_dropdown,
                                 Container(width=12),
-                                self.topics_quarter_dropdown,
-                                Container(width=12),
+                                self.topics_semester_dropdown,
+                            ], spacing=0),
+                            Container(height=12),
+                            Row([
                                 FilledButton(
-                                    content=Row([Icon(Icons.DOWNLOAD, size=16), Text("Загрузить", size=14)]),
+                                    content=Row([Icon(Icons.VISIBILITY, size=16), Text("Просмотр", size=14)], spacing=6),
+                                    style=ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+                                    on_click=lambda _: self._on_topics_load(),
+                                ),
+                                Container(width=12),
+                                OutlinedButton(
+                                    content=Row([Icon(Icons.REFRESH, size=16), Text("Обновить", size=14)], spacing=6),
                                     on_click=lambda _: self._on_topics_load(),
                                 ),
                             ], spacing=0),
+                        ]),
+                    ),
+                ),
+                Container(height=12),
+                Card(
+                    content=Container(
+                        padding=24,
+                        content=Column([
+                            Row([
+                                Icon(Icons.UPLOAD_FILE, size=24, color=ft.Colors.GREEN_600),
+                                Text("Загрузить темы и ДЗ", size=20, weight=FontWeight.W_600),
+                            ], spacing=10),
+                            Container(height=4),
+                            Text("Введите темы и ДЗ (по одной на строку). Они будут записаны на все даты выбранного периода, перезаписывая существующие.",
+                                 size=12, color=ft.Colors.GREY_600),
                             Container(height=16),
                             Row([
                                 Container(content=self.topics_input, expand=True),
                                 Container(width=16),
                                 Container(content=self.hw_input, expand=True),
                             ], spacing=0),
-                            Container(height=8),
+                            Container(height=12),
                             Row([
                                 FilledButton(
-                                    content=Row([Icon(Icons.EDIT_NOTE, size=16), Text("Заполнить темы", size=14)]),
+                                    content=Row([Icon(Icons.UPLOAD, size=16), Text("Загрузить всё", size=14)], spacing=6),
+                                    style=ButtonStyle(
+                                        shape=ft.RoundedRectangleBorder(radius=10),
+                                        bgcolor=ft.Colors.GREEN_600,
+                                    ),
+                                    on_click=lambda _: self._on_topics_upload(),
+                                ),
+                                Container(width=12),
+                                OutlinedButton(
+                                    content=Row([Icon(Icons.EDIT_NOTE, size=16), Text("Только темы", size=14)], spacing=6),
                                     on_click=lambda _: self._on_topics_fill(),
                                 ),
                                 Container(width=12),
                                 OutlinedButton(
-                                    content=Row([Icon(Icons.HOME_WORK, size=16), Text("Заполнить ДЗ", size=14)]),
+                                    content=Row([Icon(Icons.HOME_WORK, size=16), Text("Только ДЗ", size=14)], spacing=6),
                                     on_click=lambda _: self._on_hw_fill(),
-                                ),
-                                Container(width=12),
-                                OutlinedButton(
-                                    content=Row([Icon(Icons.REFRESH, size=16), Text("Обновить", size=14)]),
-                                    on_click=lambda _: self._on_topics_load(),
                                 ),
                             ], spacing=0),
                         ]),
@@ -1417,11 +1448,58 @@ class EdonishAutoApp:
         )
         self.topics_page.padding = 20
 
+    def _build_semester_options(self):
+        """Build semester options from quarters_data.
+        
+        Semester 1 = Quarter 1 + Quarter 2
+        Semester 2 = Quarter 3 + Quarter 4
+        Full Year  = All quarters (1-4)
+        """
+        options = []
+        # Group quarters by semester
+        q1_list = [q for q in self.quarters_data if "1" in q.get("name", "")]
+        q2_list = [q for q in self.quarters_data if "2" in q.get("name", "")]
+        q3_list = [q for q in self.quarters_data if "3" in q.get("name", "")]
+        q4_list = [q for q in self.quarters_data if "4" in q.get("name", "")]
+        
+        if q1_list or q2_list:
+            options.append({
+                "label": "1 полугодие (1-2 четверть)",
+                "quarters": q1_list + q2_list,
+            })
+        if q3_list or q4_list:
+            options.append({
+                "label": "2 полугодие (3-4 четверть)",
+                "quarters": q3_list + q4_list,
+            })
+        if self.quarters_data:
+            options.append({
+                "label": "Весь год (1-4 четверть)",
+                "quarters": list(self.quarters_data),
+            })
+        
+        # Fallback if no quarters found
+        if not options:
+            options.append({
+                "label": "Весь год",
+                "quarters": list(self.quarters_data),
+            })
+        
+        return options
+
+    def _get_selected_semester_quarters(self):
+        """Get the list of quarter data for the currently selected semester."""
+        selected_label = self.topics_semester_dropdown.value
+        for opt in self._semester_options:
+            if opt["label"] == selected_label:
+                return opt["quarters"]
+        # Fallback: return all
+        return list(self.quarters_data)
+
     def _on_topics_load(self):
-        """Load topics for selected class/subject/quarter."""
+        """Load topics for selected class/subject across all quarters in the selected semester."""
         class_name = self.topics_class_dropdown.value
         subject_name = self.topics_subject_dropdown.value
-        quarter_name = self.topics_quarter_dropdown.value
         
         if not class_name or class_name == "Все классы":
             self._show_snackbar("Выберите класс!")
@@ -1433,57 +1511,54 @@ class EdonishAutoApp:
         self.topics_list_container.content = Column([
             ProgressRing(),
             Container(height=16),
-            Text("Загрузка тем...", size=14, color=ft.Colors.BLUE_600),
+            Text("Загрузка тем и ДЗ...", size=14, color=ft.Colors.BLUE_600),
         ], horizontal_alignment=CrossAxisAlignment.CENTER)
         self.page.update()
-        self._log_message("Загрузка тем...")
+        self._log_message("Загрузка тем и ДЗ...")
 
-        # Need to load journal data first to get dates
-        # Find group_id, subject_id, qprop_id
+        # Find group_id and subject_id
         group_id = None
         subject_id = None
-        qprop_id = None
-        
         for g in self.groups_data:
             if g["name"] == class_name:
                 group_id = g["id"]
                 break
-
         for s in self.teacher_subjects:
             if s["subjectName"] == subject_name:
                 subject_id = s["subjectId"]
                 break
-        
-        # Find quarter ID
-        for g in (self.journal_options or {}).get("groups", []):
-            gname = f"{g.get('number') or ''}{g.get('name') or ''}"
-            if gname == class_name:
-                for q in g.get("quarters", []):
-                    if q.get("name") == quarter_name:
-                        qprop_id = q["id"]
-                        break
-                break
 
-        if not qprop_id:
-            for q in self.quarters_data:
-                if q.get("name") == quarter_name:
-                    qprop_id = q["qpropId"]
-                    break
-        
-        if not all([group_id, subject_id, qprop_id]):
-            self._show_snackbar("Не найдены данные для загрузки!")
-            self.topics_list_container.content = Text("Ошибка загрузки", size=14, color=ft.Colors.RED_600)
+        if not group_id or not subject_id:
+            self._show_snackbar("Не найдены класс/предмет!")
+            self.topics_list_container.content = Text("Ошибка: класс/предмет не найдены", size=14, color=ft.Colors.RED_600)
             self.page.update()
             return
 
+        # Get all quarters for the selected semester
+        semester_quarters = self._get_selected_semester_quarters()
+
         def load():
             try:
-                dates_data = self.api.get_journal_dates(
-                    group_id=group_id,
-                    subject_id=subject_id,
-                    quarter_property_id=qprop_id,
-                )
-                self.page.run_thread(lambda: self._display_topics_list(dates_data))
+                # Collect ALL dates from ALL quarters in the semester
+                all_dates = []
+                for q in semester_quarters:
+                    qprop_id = q.get("qpropId", 0)
+                    if not qprop_id:
+                        continue
+                    try:
+                        dates_data = self.api.get_journal_dates(
+                            group_id=group_id,
+                            subject_id=subject_id,
+                            quarter_property_id=qprop_id,
+                        )
+                        if dates_data and dates_data[0].get("days"):
+                            all_dates.extend(dates_data[0]["days"])
+                    except Exception as e:
+                        self._log_message(f"Ошибка загрузки дат для {q.get('name', '?')}: {e}", "error")
+
+                # Sort by date
+                all_dates.sort(key=lambda d: d.get("assignmentDate") or "")
+                self.page.run_thread(lambda: self._display_topics_list(all_dates, is_flat=True))
             except Exception as e:
                 self._log_message(f"Ошибка загрузки тем: {e}", "error")
                 self.page.run_thread(lambda: self._on_topics_load_error(str(e)))
@@ -1501,7 +1576,7 @@ class EdonishAutoApp:
         self.page.update()
 
     def _on_topics_fill(self):
-        """Fill topics from input — overwrites ALL dates from quarter 1 to end of year."""
+        """Fill topics from input — overwrites ALL dates in the selected semester."""
         topics = [t.strip() for t in (self.topics_input.value or "").split("\n") if t.strip()]
         if not topics:
             self._show_snackbar("Введите темы!")
@@ -1533,13 +1608,15 @@ class EdonishAutoApp:
             self._show_snackbar("Не найдены класс/предмет!")
             return
 
-        self._log_message(f"Загрузка всех дат с 1-й четверти для заполнения тем...")
+        semester_label = self.topics_semester_dropdown.value or "Весь год"
+        semester_quarters = self._get_selected_semester_quarters()
+        self._log_message(f"Загрузка дат для заполнения тем ({semester_label})...")
 
         def do_fill():
             try:
-                # Collect ALL dates from ALL quarters (1 to 4)
+                # Collect ALL dates from ALL quarters in the selected semester
                 all_dates = []
-                for q in self.quarters_data:
+                for q in semester_quarters:
                     qprop_id = q.get("qpropId", 0)
                     if not qprop_id:
                         continue
@@ -1575,7 +1652,7 @@ class EdonishAutoApp:
                     except Exception as e:
                         self._log_message(f"Ошибка: {e}", "error")
 
-                self._log_message(f"✅ Заполнено тем: {filled}/{to_fill} (всего дат: {len(all_dates)})")
+                self._log_message(f"Заполнено тем: {filled}/{to_fill} (всего дат: {len(all_dates)})")
                 self._on_topics_load()
             except Exception as ex:
                 self._log_message(f"Ошибка: {ex}", "error")
@@ -1583,7 +1660,7 @@ class EdonishAutoApp:
         threading.Thread(target=do_fill, daemon=True).start()
 
     def _on_hw_fill(self):
-        """Fill homework from input — overwrites ALL dates from quarter 1 to end of year."""
+        """Fill homework from input — overwrites ALL dates in the selected semester."""
         hws = [h.strip() for h in (self.hw_input.value or "").split("\n") if h.strip()]
         if not hws:
             self._show_snackbar("Введите ДЗ!")
@@ -1615,13 +1692,15 @@ class EdonishAutoApp:
             self._show_snackbar("Не найдены класс/предмет!")
             return
 
-        self._log_message(f"Загрузка всех дат с 1-й четверти для заполнения ДЗ...")
+        semester_label = self.topics_semester_dropdown.value or "Весь год"
+        semester_quarters = self._get_selected_semester_quarters()
+        self._log_message(f"Загрузка дат для заполнения ДЗ ({semester_label})...")
 
         def do_fill():
             try:
-                # Collect ALL dates from ALL quarters (1 to 4)
+                # Collect ALL dates from ALL quarters in the selected semester
                 all_dates = []
-                for q in self.quarters_data:
+                for q in semester_quarters:
                     qprop_id = q.get("qpropId", 0)
                     if not qprop_id:
                         continue
@@ -1657,16 +1736,132 @@ class EdonishAutoApp:
                     except Exception as e:
                         self._log_message(f"Ошибка: {e}", "error")
 
-                self._log_message(f"✅ Заполнено ДЗ: {filled}/{to_fill} (всего дат: {len(all_dates)})")
+                self._log_message(f"Заполнено ДЗ: {filled}/{to_fill} (всего дат: {len(all_dates)})")
                 self._on_topics_load()
             except Exception as ex:
                 self._log_message(f"Ошибка: {ex}", "error")
 
         threading.Thread(target=do_fill, daemon=True).start()
 
-    def _display_topics_list(self, dates_data):
-        """Display topics and homework in a nice list."""
-        if not dates_data or not dates_data[0].get("days"):
+    def _on_topics_upload(self):
+        """Upload both topics AND homework at once — overwrites ALL dates in the selected semester."""
+        topics = [t.strip() for t in (self.topics_input.value or "").split("\n") if t.strip()]
+        hws = [h.strip() for h in (self.hw_input.value or "").split("\n") if h.strip()]
+
+        if not topics and not hws:
+            self._show_snackbar("Введите темы или ДЗ!")
+            return
+
+        class_name = self.topics_class_dropdown.value
+        subject_name = self.topics_subject_dropdown.value
+
+        if not class_name or class_name == "Все классы":
+            self._show_snackbar("Выберите класс!")
+            return
+        if not subject_name or subject_name == "Все предметы":
+            self._show_snackbar("Выберите предмет!")
+            return
+
+        # Find group_id and subject_id
+        group_id = None
+        subject_id = None
+        for g in self.groups_data:
+            if g["name"] == class_name:
+                group_id = g["id"]
+                break
+        for s in self.teacher_subjects:
+            if s["subjectName"] == subject_name:
+                subject_id = s["subjectId"]
+                break
+
+        if not group_id or not subject_id:
+            self._show_snackbar("Не найдены класс/предмет!")
+            return
+
+        semester_label = self.topics_semester_dropdown.value or "Весь год"
+        semester_quarters = self._get_selected_semester_quarters()
+        self._log_message(f"Загрузка дат для заполнения тем и ДЗ ({semester_label})...")
+
+        def do_upload():
+            try:
+                # Collect ALL dates from ALL quarters in the selected semester
+                all_dates = []
+                for q in semester_quarters:
+                    qprop_id = q.get("qpropId", 0)
+                    if not qprop_id:
+                        continue
+                    try:
+                        dates_data = self.api.get_journal_dates(
+                            group_id=group_id,
+                            subject_id=subject_id,
+                            quarter_property_id=qprop_id,
+                        )
+                        if dates_data and dates_data[0].get("days"):
+                            all_dates.extend(dates_data[0]["days"])
+                    except Exception as e:
+                        self._log_message(f"Ошибка загрузки дат для {q.get('name', '?')}: {e}", "error")
+
+                if not all_dates:
+                    self._log_message("Нет дат для заполнения!", "error")
+                    return
+
+                # Sort by date
+                all_dates.sort(key=lambda d: d.get("assignmentDate") or "")
+
+                # Fill ALL dates with topics AND/OR homework (overwrite existing)
+                to_fill = len(all_dates)
+                filled_topics = 0
+                filled_hw = 0
+                for i in range(to_fill):
+                    topic_text = topics[i] if i < len(topics) else ""
+                    hw_text = hws[i] if i < len(hws) else ""
+                    if not topic_text and not hw_text:
+                        continue
+                    try:
+                        kwargs = {"schedule_date_id": all_dates[i]["assignmentDateId"]}
+                        if topic_text:
+                            kwargs["topic"] = topic_text
+                        if hw_text:
+                            kwargs["home_work"] = hw_text
+                        self.api.update_assignment(**kwargs)
+                        if topic_text:
+                            filled_topics += 1
+                        if hw_text:
+                            filled_hw += 1
+                        time.sleep(0.3)
+                    except Exception as e:
+                        self._log_message(f"Ошибка: {e}", "error")
+
+                self._log_message(
+                    f"Загружено: тем {filled_topics}, ДЗ {filled_hw} (всего дат: {len(all_dates)})"
+                )
+                self._on_topics_load()
+            except Exception as ex:
+                self._log_message(f"Ошибка: {ex}", "error")
+
+        threading.Thread(target=do_upload, daemon=True).start()
+
+    def _display_topics_list(self, dates_data, is_flat=False):
+        """Display topics and homework in a nice list.
+        
+        Args:
+            dates_data: Either raw API response (list of dicts with "days" key) 
+                        or a flat list of day dicts when is_flat=True
+        """
+        if is_flat:
+            dates = dates_data
+        else:
+            if not dates_data or not dates_data[0].get("days"):
+                self.topics_list_container.content = Column([
+                    Icon(Icons.INFO, size=48, color=ft.Colors.GREY_400),
+                    Container(height=12),
+                    Text("Нет данных о датах", size=16, color=ft.Colors.GREY_600),
+                ], horizontal_alignment=CrossAxisAlignment.CENTER)
+                self.page.update()
+                return
+            dates = dates_data[0]["days"]
+
+        if not dates:
             self.topics_list_container.content = Column([
                 Icon(Icons.INFO, size=48, color=ft.Colors.GREY_400),
                 Container(height=12),
@@ -1674,8 +1869,6 @@ class EdonishAutoApp:
             ], horizontal_alignment=CrossAxisAlignment.CENTER)
             self.page.update()
             return
-
-        dates = dates_data[0]["days"]
         self._dates_data = dates  # Store for fill operations
         
         rows = []
@@ -2149,14 +2342,23 @@ class EdonishAutoApp:
         ]
         self.quarter_dropdown.options = quarter_options
         self.journal_quarter_dropdown.options = quarter_options
-        self.topics_quarter_dropdown.options = quarter_options
+        # Update topics semester dropdown
+        self._semester_options = self._build_semester_options()
+        self.topics_semester_dropdown.options = [dropdown.Option(s["label"]) for s in self._semester_options]
+        if self._semester_options:
+            self.topics_semester_dropdown.value = self._semester_options[0]["label"]
 
         # Auto-detect current quarter based on date
         current_quarter_name = self._detect_current_quarter()
         if current_quarter_name:
             self.quarter_dropdown.value = current_quarter_name
             self.journal_quarter_dropdown.value = current_quarter_name
-            self.topics_quarter_dropdown.value = current_quarter_name
+            # Auto-select the semester containing the current quarter
+            for opt in self._semester_options:
+                for q in opt["quarters"]:
+                    if q.get("name") == current_quarter_name:
+                        self.topics_semester_dropdown.value = opt["label"]
+                        break
             self._log_message(f"Автоопределение: текущая четверть — {current_quarter_name}")
 
         msg = f"Загружено: {len(self.groups_data)} классов, {len(self.teacher_subjects)} предметов"
