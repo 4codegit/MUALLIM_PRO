@@ -133,6 +133,7 @@ class GradeEngine:
         fill_empty_only: bool = True,
         grades_per_date: int = 1,
         include_na: bool = True,
+        student_name_filter: str = None,
     ) -> GradePlan:
         """
         Build a complete plan of grades to create.
@@ -142,6 +143,9 @@ class GradeEngine:
         - Get students list
         - For each student, check if they already have a mark on each date
         - If not (or fill_empty_only=False), plan a random grade
+        
+        Args:
+            student_name_filter: If provided, only generate grades for this student
         """
         plan = GradePlan()
         self._log("📋 Построение плана оценок...")
@@ -218,6 +222,10 @@ class GradeEngine:
                     for student in students:
                         student_id = student["studentId"]
                         student_name = f"{student.get('lastName', '')} {student.get('firstName', '')}"
+
+                        # Skip if student filter is active and this is not the selected student
+                        if student_name_filter and student_name_filter != "Все ученики" and student_name != student_name_filter:
+                            continue
 
                         # Get existing marks indexed by assignmentDateId
                         existing_marks = {}
