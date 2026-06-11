@@ -1,0 +1,50 @@
+name: Build Windows Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build GUI binary
+        run: |
+          pyinstaller edonish-auto.spec --clean --noconfirm
+
+      - name: Build CLI binary
+        run: |
+          pyinstaller edonish-auto-cli.spec --clean --noconfirm
+
+      - name: Create ZIP package
+        run: |
+          Compress-Archive -Path dist\windows\*.exe -DestinationPath edonish-auto-windows.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: edonish-auto-windows
+          path: edonish-auto-windows.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: edonish-auto-windows.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
