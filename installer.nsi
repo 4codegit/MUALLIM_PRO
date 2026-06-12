@@ -4,8 +4,9 @@
 ; ═══════════════════════════════════════════════════════════════════
 
 !define APPNAME "eDonish Auto"
-!define APPVERSION "3.20.0"
+!define APPVERSION "3.24.0"
 !define APPEXE "edonish-auto.exe"
+!define CLIBINARY "edonish-auto-cli.exe"
 !define COMPANY "Edonish Auto Team"
 
 ; Modern UI
@@ -34,8 +35,9 @@ Section "Core Files" SecCore
     SectionIn RO
     SetOutPath $INSTDIR
 
-    ; Main executable
+    ; Main executables
     File "dist\windows\${APPEXE}"
+    File "dist\windows\${CLIBINARY}"
 
     ; Create directories
     CreateDirectory "$INSTDIR\logs"

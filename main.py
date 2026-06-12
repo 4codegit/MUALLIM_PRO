@@ -820,6 +820,20 @@ class EdonishAutoApp:
             value=str(MAX_GRADE),
             keyboard_type=ft.KeyboardType.NUMBER,
         )
+        self.student_dropdown = Dropdown(
+            label="Ученик",
+            width=dropdown_width,
+            text_size=15,
+            options=[dropdown.Option("Все ученики")],
+            value="Все ученики",
+            on_select=self._on_student_change,
+            visible=False,  # Hidden by default, shown after analysis
+        )
+        self.student_filter_check = Checkbox(
+            label="Только выбранного ученика",
+            value=False,
+            tooltip="Генерировать оценки только для выбранного ученика",
+        )
         self.fill_empty_check = Checkbox(
             label="Только пустые ячейки",
             value=True,
@@ -863,9 +877,13 @@ class EdonishAutoApp:
                             Column([self.subject_dropdown, Container(height=12),
                                 Row([self.min_grade_field, Text("—", size=20, weight=FontWeight.BOLD), self.max_grade_field], alignment=MainAxisAlignment.START, spacing=8),
                                 Container(height=12),
-                                Column([self.fill_empty_check, self.quarter_marks_check, self.na_grade_check, self.signature_check, self.signature_field]),
+                                Column([self.student_filter_check, self.fill_empty_check, self.quarter_marks_check, self.na_grade_check, self.signature_check, self.signature_field]),
                             ]),
                         ], alignment=MainAxisAlignment.START),
+                        Container(height=12),
+                        Row([
+                            self.student_dropdown,
+                        ]),
                     ],
                 ),
             ),
@@ -2635,6 +2653,14 @@ class EdonishAutoApp:
         except Exception:
             pass
 
+    def _on_student_change(self, e):
+        """Handle student selection change."""
+        # Value is already updated by the dropdown itself
+        try:
+            self.page.update()
+        except Exception:
+            pass
+
     def _on_journal_class_change(self, e):
         """Filter subjects when class changes in the journal page."""
         if not self.journal_options:
@@ -2802,6 +2828,32 @@ class EdonishAutoApp:
                 min_grade = int(self.min_grade_field.value or MIN_GRADE)
                 max_grade = int(self.max_grade_field.value or MAX_GRADE)
 
+                # Collect all unique students from the plan
+                students_set = set()
+                
+                # Get students from API for each group/subject/quarter combination
+                all_students = []
+                for group in groups:
+                    group_id = group["id"]
+                    for subject in subjects:
+                        subject_id = subject.get("subjectId", subject.get("id"))
+                        for quarter in quarters:
+                            qprop_id = quarter["qpropId"]
+                            try:
+                                students = self.api.get_journal_students(
+                                    group_id=group_id,
+                                    subject_id=subject_id,
+                                    quarter_property_id=qprop_id,
+                                )
+                                if students:
+                                    all_students.extend(students)
+                                    for student in students:
+                                        student_name = f"{student.get('lastName', '')} {student.get('firstName', '')}".strip()
+                                        if student_name:
+                                            students_set.add(student_name)
+                            except Exception:
+                                pass
+
                 plan = self.engine.build_grade_plan(
                     groups=groups,
                     subjects=subjects,
@@ -2810,7 +2862,11 @@ class EdonishAutoApp:
                     max_grade=max_grade,
                     fill_empty_only=self.fill_empty_check.value,
                     include_na=self.na_grade_check.value if hasattr(self, 'na_grade_check') else True,
+                    student_name_filter=self.student_dropdown.value if hasattr(self, 'student_filter_check') and self.student_filter_check.value else None,
                 )
+
+                # Store students for dropdown
+                self._all_students = sorted(list(students_set))
 
                 self._current_plan = plan
                 self._on_analyze_complete(plan)
@@ -2826,6 +2882,16 @@ class EdonishAutoApp:
         self.analyze_btn.disabled = False
         self.start_btn.disabled = False
         self.signature_btn.disabled = False
+
+        # Update student dropdown with collected students
+        if hasattr(self, '_all_students') and self._all_students:
+            student_options = [dropdown.Option("Все ученики")] + [dropdown.Option(s) for s in self._all_students]
+            self.student_dropdown.options = student_options
+            self.student_dropdown.visible = True
+            try:
+                self.page.update()
+            except Exception:
+                pass
 
         to_execute = sum(1 for t in plan.tasks if t.status == "pending")
 

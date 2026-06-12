@@ -1,16 +1,16 @@
 #!/bin/bash
 # ════════════════════════════════════════════════════════════════════
-# eDonish Auto — GitHub Release Creator
-# Reads version dynamically from config.py
+# eDonish Auto — GitHub Release Creator (Go/Fyne version)
+# Reads version dynamically from config.go
 # ════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# ── Read version dynamically from config.py ────────────────────────
-VERSION="$(python3 -c "import sys; sys.path.insert(0, '$SCRIPT_DIR'); from config import APP_VERSION; print(APP_VERSION)" 2>/dev/null)"
+# ── Read version dynamically from config.go ────────────────────────
+VERSION="$(grep 'AppVersion' "$SCRIPT_DIR/internal/config/config.go" | grep -oP '"\K[^"]+' | head -1)"
 if [ -z "$VERSION" ]; then
-    echo "Error: Could not read version from config.py"
+    echo "Error: Could not read version from config.go"
     exit 1
 fi
 TAG="v${VERSION}"
@@ -28,33 +28,25 @@ if [ -z "$GITHUB_TOKEN" ]; then
 fi
 
 # Build release body
-BODY="## What's new in ${TAG}
+BODY="## Что нового в ${TAG}
 
-### Bug Fixes:
-- Fixed version mismatch across Linux packages (RPM/DEB now read version from config.py dynamically)
-- Fixed role permissions: can_modify_grades checks ALL user roles, not just selected one
-- Fixed mobile horizontal scroll in journal table
-- Removed fractional grade display (1/2, 0/2) — now shows numerator only
-- Fixed desktop AppBar missing avatar with owner name, role, and role switching
+### Исправления:
+- Исправлен баг фильтрации четвертей в журнале — выбор конкретной четверти теперь корректно отображает данные
+- Список четвертей обновляется при выборе класса (аналогично предметам)
+- Добавлено логирование выбора четвертей для отладки
 
-### Improvements:
-- Random grade button per student row in journal
-- Desktop AppBar now shows avatar with name, role, and role switching
-- Version numbers synced across all platforms (Linux RPM/DEB, Windows NSIS, macOS bundle)
-- Build scripts (build.sh, package.sh) now read version dynamically from config.py
-- Packaging scripts auto-update RPM spec version before build
-- Quarter mark cell shows average and ceil(grade) on click
+### Новые функции (с предыдущих версий):
+- Навигация по ячейкам клавиатурой: Tab (вправо), Delete (удалить), стрелки
+- Быстрый ввод оценок: цифры 1-9 и 0 (=10) на клавиатуре
+- Рандомная пересдача оценок с настраиваемым диапазоном min-max
+- Персональные пределы оценок для каждого ученика
+- Умная система оценок на основе среднего балла ученика
+- Поддержка дневных, четвертных, семестровых и годовых оценок
 
-### Full Changelog:
-- ${TAG}: Version sync across all platforms, dynamic versioning for Linux packages
-- v3.19.1: Desktop avatar, mobile scroll, role permissions fix
-- v3.18.7: Fixed grade saving, improved user info display
-- v3.18.6: Add detailed logging for grade operations
-- v3.18.5: Auto-save grades on input
-- v3.18.4: Show only numeric grades (no fractions)
-- v3.18.3: Fixed UI freeze
-- v3.18.2: Fixed NameError
-- v3.18.1: UI fixes"
+### Полная история:
+- ${TAG}: Исправление фильтрации четвертей, обновление UI журнала
+- v0.4.0: Умные оценки, навигация клавиатурой, рандом с min-max
+- v0.3.0: Начальная версия Go/Fyne"
 
 curl -s -H "Authorization: token $GITHUB_TOKEN" \
      -H "Accept: application/vnd.github.v3+json" \

@@ -15,7 +15,6 @@ BUILD_DIR="$SCRIPT_DIR/build"
 
 # ── Read version dynamically from config.py ────────────────────────
 VERSION="$(python3 -c "import sys; sys.path.insert(0, '$SCRIPT_DIR'); from config import APP_VERSION; print(APP_VERSION)" 2>/dev/null || echo "3.20.0")"
-log "Version from config.py: $VERSION"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -28,6 +27,8 @@ log()  { echo -e "${CYAN}[BUILD]${NC} $*"; }
 ok()   { echo -e "${GREEN}[OK]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()  { echo -e "${RED}[ERROR]${NC} $*"; }
+
+log "Version from config.py: $VERSION"
 
 # ── Clean ──────────────────────────────────────────────────────────
 clean() {

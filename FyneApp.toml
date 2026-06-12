@@ -1,0 +1,19 @@
+[Details]
+  Icon = "Icon.png"
+  Name = "eDonish Auto"
+  ID = "com.edonish.auto"
+  Version = "0.5.0"
+  Build = 1
+
+[Merge]
+  [Merge.Linux]
+    Categories = ["Education"]
+    Comment = "Automated grade management for edonish.tj"
+    Exec = "edonish-auto"
+    Icon = "edonish-auto"
+
+  [Merge.Windows]
+    Comment = "Automated grade management for edonish.tj"
+
+  [Merge.Android]
+    Comment = "Automated grade management for edonish.tj"

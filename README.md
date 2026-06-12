@@ -4,6 +4,17 @@
 
 Десктопная программа для автоматического заполнения оценок в электронном журнале eDonish (г. Душанбе, Таджикистан).
 
+## 🆕 Что нового в версии 3.24.0
+
+### 🎯 Выбор конкретного ученика
+Теперь можно генерировать оценки только для выбранного ученика:
+1. Выберите класс, предмет и четверть
+2. Укажите минимальную и максимальную оценку (по умолчанию 5-10)
+3. Нажмите **"Анализировать"** (F5)
+4. После анализа появится список всех учеников
+5. Включите **"Только выбранного ученика"** и выберите нужного
+6. Нажмите **"Запустить"**
+
 ## Возможности
 
 - 🔐 **Автоматический вход** — логин через API, получение всех данных (школа, классы, предметы, четверти)
@@ -103,14 +114,60 @@ edonish-auto-cli --login 200117707 --password test123 --save-report --json-outpu
 ```bash
 # Скомпилировать для текущей платформы
 bash build.sh linux     # Linux бинарники
-bash build.sh rpm       # Linux + RPM пакет
+bash build.sh rpm       # Linux + RPM пакет (требует rpm-build, fpm)
 bash build.sh windows   # Windows (только на Windows)
 bash build.sh macos     # macOS (только на macOS)
 bash build.sh all       # Всё для текущей платформы
 
+# Альтернативная сборка RPM/DEB
+bash package.sh rpm     # RPM пакет
+bash package.sh deb     # DEB пакет
+
 # Или через Makefile
 make native-gui         # GUI напрямую
 make native-cli         # CLI напрямую
+```
+
+### Сборка для всех платформ
+
+#### 🐧 Linux (Fedora/RPM)
+```bash
+# Установите зависимости для сборки
+sudo dnf install rpm-build python3-pip
+
+# Скомпилируйте
+./build.sh linux
+./package.sh rpm
+
+# Получите RPM в dist/rpm/
+```
+
+#### 🪟 Windows
+```powershell
+# На Windows:
+pip install pyinstaller
+pyinstaller edonish-auto.spec --clean
+pyinstaller edonish-auto-cli.spec --clean
+
+# Получите .exe в dist\windows\
+```
+
+#### 🍎 macOS
+```bash
+# На macOS:
+pip3 install pyinstaller
+./build.sh macos
+
+# Получите DMG в dist/dmg/
+```
+
+#### 🤖 Android
+```bash
+# Требуется Flet для Android:
+pip install flet
+flet package android
+
+# Откройте build/android/ в Android Studio и соберите APK
 ```
 
 ### GitHub Actions CI/CD
