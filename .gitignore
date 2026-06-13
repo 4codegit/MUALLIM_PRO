@@ -64,3 +64,4 @@ go.work
 
 # Fyne cache
 .fyne/
+tool-results/

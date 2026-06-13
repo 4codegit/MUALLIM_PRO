@@ -6,22 +6,18 @@ import (
 	"os"
 	"runtime"
 
-	"fyne.io/fyne/v2/app"
+	"github.com/4codegit/edonish-auto/internal/ui"
 )
 
 // main - точка входа в приложение
 func main() {
-	// On Windows, force software rendering to avoid OpenGL driver crashes.
+	// На Windows принудительно используем software rendering
+	// для избежания крашей OpenGL драйверов
 	if runtime.GOOS == "windows" && os.Getenv("FYNE_RENDER") == "" {
 		os.Setenv("FYNE_RENDER", "software")
 	}
 
-	// Создаём приложение Fyne
-	a := app.New()
-
-	// Создаём контроллер приложения
-	ctrl := NewAppController(a)
-
-	// Запускаем приложение
-	ctrl.Run()
+	// Создаём и запускаем приложение
+	app := ui.NewApp()
+	app.Run()
 }
