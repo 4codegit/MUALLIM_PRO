@@ -55,10 +55,6 @@ github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e h1:fD57ERR4JtEqsWb
 github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e/go.mod h1:zD1mROLANZcx1PVRCS0qkT7pwLkGfwJo4zjcN/Tysno=
 github.com/pkg/profile v1.7.0 h1:hnbDkaNWPCLMO9wGLdBFTIZvzDrDfBM2072E1S9gJkA=
 github.com/pkg/profile v1.7.0/go.mod h1:8Uer0jas47ZQMJ7VD+OHknK4YDY07LPUC6dEvqDjvNo=
-github.com/PuerkitoBio/goquery v1.9.2 h1:GHPCaP0ODyyxqcNoFGYlAprUFH81NuRPd0GX3Zu2Mvk=
-github.com/PuerkitoBio/goquery v1.9.2/go.mod h1:ChJKF4GqkG1Ww7WUeJkEjZkWCGjEYiDrl5E0RZmbJKo=
-github.com/andybalholm/cascadia v1.3.2 h1:3Xi6Dw5lHF15OHtwD5kuxPnARhNP8J84m6CfLnKO0lY=
-github.com/andybalholm/cascadia v1.3.2/go.mod h1:5D5cMo6BhC2ij1N6G3TYgC3i4KXey9Z4E4cY4n9khEw=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/rivo/uniseg v0.2.0 h1:S1pD9weZBuJdFmowNwbpi7BJ8TNftyUImj/0WQi72jY=
