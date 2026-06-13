@@ -61,12 +61,14 @@ jobs:
 
       - name: Download dependencies
         run: GONOSUMCHECK=* GOFLAGS=-insecure go mod tidy
+        shell: bash
 
       - name: Build
         env:
           CGO_ENABLED: 1
         run: |
           go build -ldflags "-s -w -X main.version=${{ steps.version.outputs.VERSION }}" -o ${{ matrix.output }} .
+        shell: bash
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
