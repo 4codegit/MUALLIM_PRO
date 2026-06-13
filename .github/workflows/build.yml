@@ -54,6 +54,9 @@ jobs:
           echo "Building version: ${{ steps.version.outputs.VERSION }}"
         shell: bash
 
+      - name: Download dependencies
+        run: go mod tidy
+
       - name: Build
         env:
           CGO_ENABLED: 1
