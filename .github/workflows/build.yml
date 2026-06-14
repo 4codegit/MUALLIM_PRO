@@ -84,7 +84,16 @@ jobs:
 
           New-Item -ItemType Directory -Force -Path windows-portable | Out-Null
           Copy-Item ${{ matrix.output }} windows-portable\
-          Copy-Item mesa\x64\opengl32.dll, mesa\x64\libglapi.dll, mesa\x64\libgallium_wgl.dll windows-portable\
+          # Copy available Mesa DLLs (libglapi.dll was merged into opengl32.dll in Mesa 26+)
+          $mesaDlls = @('opengl32.dll', 'libgallium_wgl.dll')
+          foreach ($dll in $mesaDlls) {
+            if (Test-Path "mesa\x64\$dll") {
+              Copy-Item "mesa\x64\$dll" windows-portable\
+              Write-Host "Bundled: $dll"
+            } else {
+              Write-Host "Warning: $dll not found in Mesa archive, skipping"
+            }
+          }
           Compress-Archive -Path windows-portable\* -DestinationPath edonish-auto-windows-portable.zip -Force
 
       - name: Upload artifact
