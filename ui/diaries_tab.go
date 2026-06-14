@@ -2,6 +2,7 @@ package ui
 
 import (
         "fmt"
+        "image/color"
 
         "fyne.io/fyne/v2"
         "fyne.io/fyne/v2/canvas"
@@ -13,7 +14,13 @@ import (
         "github.com/4codegit/edonish-auto/client"
 )
 
-// DiariesTab manages the Diaries (Дневник) tab with signatures and diligence marks.
+// DiariesTab manages the Diaries (Дневник) tab with chat-like
+// teacher/parent conversation, behavior comments, and signatures.
+//
+// In a real school diary:
+//   - The teacher writes a comment about the student (praise, complaint, behavior note)
+//   - The parent reads the comment, signs to acknowledge, and may write a response
+//   - This creates a "conversation" between teacher and parent
 type DiariesTab struct {
         controller Controller
         container  *fyne.Container
@@ -59,8 +66,18 @@ func (dt *DiariesTab) buildUI() {
         )
 
         // Batch actions
-        batchSignBtn := widget.NewButton("Подписать все (одна комбинация)", dt.onBatchSignAll)
-        batchSignBtn.Importance = widget.HighImportance
+        batchPraiseBtn := widget.NewButton("Подписать: Похвала", func() {
+                dt.onBatchSignWithCategory(BehaviorPraise)
+        })
+        batchPraiseBtn.Importance = widget.HighImportance
+
+        batchMixedBtn := widget.NewButton("Подписать: Смешанный", func() {
+                dt.onBatchSignWithCategory(BehaviorMixed)
+        })
+
+        batchComplaintBtn := widget.NewButton("Подписать: Жалоба", func() {
+                dt.onBatchSignWithCategory(BehaviorComplaint)
+        })
 
         refreshBtn := widget.NewButtonWithIcon("Обновить", theme.ViewRefreshIcon(), func() {
                 if dt.selectedGroup != nil {
@@ -69,13 +86,17 @@ func (dt *DiariesTab) buildUI() {
         })
 
         actionRow := container.NewHBox(
-                batchSignBtn,
+                batchPraiseBtn,
+                batchMixedBtn,
+                batchComplaintBtn,
                 refreshBtn,
         )
 
-        // Placeholder for diaries list
+        // Placeholder
         placeholder := widget.NewLabelWithStyle(
-                "Выберите класс для загрузки дневников",
+                "Выберите класс для загрузки дневников\n\n"+
+                        "В дневнике учитель пишет комментарий о поведении ученика,\n"+
+                        "а родитель подписывает и может ответить.",
                 fyne.TextAlignCenter,
                 fyne.TextStyle{Italic: true},
         )
@@ -165,7 +186,8 @@ func (dt *DiariesTab) loadDiaries() {
         })
 }
 
-// rebuildDiariesList builds the list showing each diary entry with status.
+// rebuildDiariesList builds the list showing each diary entry as a
+// chat-like conversation between teacher and parent.
 func (dt *DiariesTab) rebuildDiariesList() {
         if len(dt.diaries) == 0 {
                 dt.container.Objects = []fyne.CanvasObject{
@@ -173,7 +195,9 @@ func (dt *DiariesTab) rebuildDiariesList() {
                                 container.NewVBox(
                                         container.NewHBox(widget.NewLabel("Класс:"), dt.classSel),
                                         container.NewHBox(
-                                                widget.NewButton("Подписать все (одна комбинация)", dt.onBatchSignAll),
+                                                widget.NewButton("Подписать: Похвала", func() { dt.onBatchSignWithCategory(BehaviorPraise) }),
+                                                widget.NewButton("Подписать: Смешанный", func() { dt.onBatchSignWithCategory(BehaviorMixed) }),
+                                                widget.NewButton("Подписать: Жалоба", func() { dt.onBatchSignWithCategory(BehaviorComplaint) }),
                                                 widget.NewButtonWithIcon("Обновить", theme.ViewRefreshIcon(), func() {
                                                         if dt.selectedGroup != nil {
                                                                 go dt.loadDiaries()
@@ -197,30 +221,32 @@ func (dt *DiariesTab) rebuildDiariesList() {
                         return len(dt.diaries)
                 },
                 func() fyne.CanvasObject {
-                        // Group & Subject
-                        groupText := widget.NewLabel("")
-                        groupText.TextStyle = fyne.TextStyle{Bold: true}
+                        // Header: subject + group
+                        subjectLabel := widget.NewLabel("")
+                        subjectLabel.TextStyle = fyne.TextStyle{Bold: true}
+                        subjectLabel.Wrapping = fyne.TextWrapWord
 
-                        subjectText := widget.NewLabel("")
+                        // Teacher comment (chat bubble style)
+                        teacherLabel := widget.NewLabel("")
+                        teacherLabel.Wrapping = fyne.TextWrapWord
 
-                        quarterText := widget.NewLabel("")
+                        // Parent response area
+                        parentLabel := widget.NewLabel("")
+                        parentLabel.Wrapping = fyne.TextWrapWord
 
-                        // Diligence mark
-                        diligenceText := widget.NewLabel("")
-                        diligenceText.TextStyle = fyne.TextStyle{Bold: true}
+                        // Diligence + signatures row
+                        diligenceLabel := widget.NewLabel("")
+                        diligenceLabel.TextStyle = fyne.TextStyle{Bold: true}
 
-                        // Signature statuses
-                        parentText := widget.NewLabel("")
+                        sigsLabel := widget.NewLabel("")
+                        sigsLabel.TextStyle = fyne.TextStyle{Italic: true}
 
-                        managerText := widget.NewLabel("")
-
-                        // Layout: left side (group, subject, quarter), center (diligence), right (signatures)
-                        leftBox := container.NewVBox(groupText, subjectText, quarterText)
-                        centerBox := container.NewVBox(diligenceText)
-                        rightBox := container.NewVBox(parentText, managerText)
-
-                        row := container.NewBorder(nil, nil, leftBox, rightBox, centerBox)
-                        return container.NewPadded(row)
+                        return container.NewVBox(
+                                subjectLabel,
+                                teacherLabel,
+                                parentLabel,
+                                container.NewHBox(diligenceLabel, sigsLabel),
+                        )
                 },
                 func(id widget.ListItemID, cell fyne.CanvasObject) {
                         if id < 0 || id >= len(dt.diaries) {
@@ -228,47 +254,70 @@ func (dt *DiariesTab) rebuildDiariesList() {
                         }
                         entry := dt.diaries[id]
 
-                        pad := cell.(*fyne.Container)
-                        border := pad.Objects[0].(*fyne.Container)
+                        vbox := cell.(*fyne.Container)
 
-                        leftBox := border.Objects[0].(*fyne.Container)
-                        centerBox := border.Objects[1].(*fyne.Container)
-                        rightBox := border.Objects[2].(*fyne.Container)
+                        subjectLabel := vbox.Objects[0].(*widget.Label)
+                        teacherLabel := vbox.Objects[1].(*widget.Label)
+                        parentLabel := vbox.Objects[2].(*widget.Label)
+                        bottomRow := vbox.Objects[3].(*fyne.Container)
+                        diligenceLabel := bottomRow.Objects[0].(*widget.Label)
+                        sigsLabel := bottomRow.Objects[1].(*widget.Label)
 
-                        groupText := leftBox.Objects[0].(*widget.Label)
-                        subjectText := leftBox.Objects[1].(*widget.Label)
-                        quarterText := leftBox.Objects[2].(*widget.Label)
+                        // Header
+                        headerText := fmt.Sprintf("%s — %s", entry.SubjectName, entry.GroupName)
+                        if entry.StudentLastName != "" || entry.StudentFirstName != "" {
+                                headerText = fmt.Sprintf("%s %s: %s — %s",
+                                        entry.StudentLastName, entry.StudentFirstName,
+                                        entry.SubjectName, entry.GroupName)
+                        }
+                        subjectLabel.SetText(headerText)
 
-                        diligenceText := centerBox.Objects[0].(*widget.Label)
+                        // Teacher comment (chat bubble)
+                        if entry.TeacherComment != "" {
+                                teacherLabel.SetText("Учитель: " + entry.TeacherComment)
+                                teacherLabel.TextStyle = fyne.TextStyle{}
+                        } else if entry.DiligenceMark != "" {
+                                // Use diligence mark description as a fallback comment
+                                if desc, ok := DiligenceToBehaviorComment[entry.DiligenceMark]; ok {
+                                        teacherLabel.SetText("Учитель: " + desc)
+                                } else {
+                                        teacherLabel.SetText("")
+                                }
+                        } else {
+                                teacherLabel.SetText("Учитель: комментарий не оставлен")
+                                teacherLabel.TextStyle = fyne.TextStyle{Italic: true}
+                        }
 
-                        parentText := rightBox.Objects[0].(*widget.Label)
-                        managerText := rightBox.Objects[1].(*widget.Label)
-
-                        // Group & Subject
-                        groupText.SetText(entry.GroupName)
-                        subjectText.SetText(entry.SubjectName)
-                        quarterText.SetText(entry.QuarterName)
+                        // Parent response (chat bubble)
+                        if entry.ParentComment != "" {
+                                parentLabel.SetText("Родитель: " + entry.ParentComment)
+                                parentLabel.TextStyle = fyne.TextStyle{}
+                        } else if entry.ParentSigned {
+                                parentLabel.SetText("Родитель: ознакомлен, подписано")
+                                parentLabel.TextStyle = fyne.TextStyle{Italic: true}
+                        } else {
+                                parentLabel.SetText("")
+                        }
 
                         // Diligence mark
                         if entry.DiligenceMark != "" {
-                                diligenceText.SetText(fmt.Sprintf("Прилежание: %s", entry.DiligenceMark))
+                                diligenceLabel.SetText("Прилежание: " + entry.DiligenceMark)
                         } else {
-                                diligenceText.SetText("Прилежание: не указано")
+                                diligenceLabel.SetText("Прилежание: —")
                         }
 
-                        // Parent signature status
+                        // Signature status
+                        sigs := ""
                         if entry.ParentSigned {
-                                parentText.SetText("✓ Подписано")
-                        } else {
-                                parentText.SetText("✗ Не подписано")
+                                sigs += "Род. подписано "
                         }
-
-                        // Manager signature status
                         if entry.ManagerSigned {
-                                managerText.SetText("✓ Подписано")
-                        } else {
-                                managerText.SetText("✗ Не подписано")
+                                sigs += "Рук. подписано"
                         }
+                        if sigs == "" {
+                                sigs = "Не подписано"
+                        }
+                        sigsLabel.SetText(sigs)
                 },
         )
 
@@ -282,7 +331,9 @@ func (dt *DiariesTab) rebuildDiariesList() {
                         container.NewVBox(
                                 container.NewHBox(widget.NewLabel("Класс:"), dt.classSel),
                                 container.NewHBox(
-                                        widget.NewButton("Подписать все (одна комбинация)", dt.onBatchSignAll),
+                                        widget.NewButton("Подписать: Похвала", func() { dt.onBatchSignWithCategory(BehaviorPraise) }),
+                                        widget.NewButton("Подписать: Смешанный", func() { dt.onBatchSignWithCategory(BehaviorMixed) }),
+                                        widget.NewButton("Подписать: Жалоба", func() { dt.onBatchSignWithCategory(BehaviorComplaint) }),
                                         widget.NewButtonWithIcon("Обновить", theme.ViewRefreshIcon(), func() {
                                                 if dt.selectedGroup != nil {
                                                         go dt.loadDiaries()
@@ -300,7 +351,8 @@ func (dt *DiariesTab) rebuildDiariesList() {
         dt.container.Refresh()
 }
 
-// showDiaryDialog shows a dialog for a single diary entry with signature and diligence actions.
+// showDiaryDialog shows a dialog for a single diary entry with a chat-like
+// interface for teacher comments and parent signatures.
 func (dt *DiariesTab) showDiaryDialog(idx int) {
         if idx < 0 || idx >= len(dt.diaries) {
                 return
@@ -308,28 +360,65 @@ func (dt *DiariesTab) showDiaryDialog(idx int) {
 
         entry := dt.diaries[idx]
 
-        // Info labels
-        groupLabel := widget.NewLabel(fmt.Sprintf("Класс: %s", entry.GroupName))
-        subjectLabel := widget.NewLabel(fmt.Sprintf("Предмет: %s", entry.SubjectName))
-        quarterLabel := widget.NewLabel(fmt.Sprintf("Четверть: %s", entry.QuarterName))
+        var dlg dialog.Dialog
 
-        // Current diligence display
-        var diligenceDisplay string
-        if entry.DiligenceMark != "" {
-                diligenceDisplay = entry.DiligenceMark
+        // --- HEADER ---
+        headerText := fmt.Sprintf("%s — %s (%s)", entry.SubjectName, entry.GroupName, entry.QuarterName)
+        if entry.StudentLastName != "" || entry.StudentFirstName != "" {
+                headerText = fmt.Sprintf("%s %s: %s — %s (%s)",
+                        entry.StudentLastName, entry.StudentFirstName,
+                        entry.SubjectName, entry.GroupName, entry.QuarterName)
+        }
+        headerLabel := widget.NewLabelWithStyle(headerText, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+
+        // --- CONVERSATION AREA ---
+        // Teacher's comment (like a chat bubble)
+        teacherBubbleTitle := canvas.NewText("Учитель:", color.NRGBA{R: 37, G: 99, B: 235, A: 255})
+        teacherBubbleTitle.TextStyle = fyne.TextStyle{Bold: true}
+        teacherBubbleTitle.TextSize = 13
+
+        var teacherCommentDisplay string
+        if entry.TeacherComment != "" {
+                teacherCommentDisplay = entry.TeacherComment
+        } else if entry.DiligenceMark != "" {
+                if desc, ok := DiligenceToBehaviorComment[entry.DiligenceMark]; ok {
+                        teacherCommentDisplay = desc
+                } else {
+                        teacherCommentDisplay = "Прилежание: " + entry.DiligenceMark
+                }
         } else {
-                diligenceDisplay = "не указано"
+                teacherCommentDisplay = "(нет комментария)"
         }
-        currentDiligenceLabel := widget.NewLabel(fmt.Sprintf("Текущее прилежание: %s", diligenceDisplay))
+        teacherCommentLabel := widget.NewLabel(teacherCommentDisplay)
+        teacherCommentLabel.Wrapping = fyne.TextWrapWord
 
-        // Diligence selector
-        diligenceSel := widget.NewSelect(DiligenceMarks, nil)
-        diligenceSel.PlaceHolder = "Выберите прилежание..."
-        if entry.DiligenceMark != "" {
-                diligenceSel.SetSelected(entry.DiligenceMark)
+        teacherBubble := container.NewVBox(
+                teacherBubbleTitle,
+                teacherCommentLabel,
+        )
+
+        // Parent's response (like a chat bubble)
+        parentBubbleTitle := canvas.NewText("Родитель:", color.NRGBA{R: 22, G: 163, B: 74, A: 255})
+        parentBubbleTitle.TextStyle = fyne.TextStyle{Bold: true}
+        parentBubbleTitle.TextSize = 13
+
+        var parentCommentDisplay string
+        if entry.ParentComment != "" {
+                parentCommentDisplay = entry.ParentComment
+        } else if entry.ParentSigned {
+                parentCommentDisplay = "Ознакомлен, подписано"
+        } else {
+                parentCommentDisplay = "(ожидает подписи)"
         }
+        parentCommentLabel := widget.NewLabel(parentCommentDisplay)
+        parentCommentLabel.Wrapping = fyne.TextWrapWord
 
-        // Signature status display
+        parentBubble := container.NewVBox(
+                parentBubbleTitle,
+                parentCommentLabel,
+        )
+
+        // Signature status
         parentStatus, parentColor := FormatSignedStatus(entry.ParentSigned)
         parentStatusText := canvas.NewText(fmt.Sprintf("Родители: %s", parentStatus), parentColor)
         parentStatusText.TextSize = 12
@@ -338,56 +427,145 @@ func (dt *DiariesTab) showDiaryDialog(idx int) {
         managerStatusText := canvas.NewText(fmt.Sprintf("Руководитель: %s", managerStatus), managerColor)
         managerStatusText.TextSize = 12
 
-        var dlg dialog.Dialog
+        // --- ACTION AREA ---
 
-        // Parent signature button
-        parentBtn := widget.NewButton("Подпись родителей", func() {
-                go dt.signDiary(entry.DiaryID, "parent", idx)
+        // Teacher: behavior category selector
+        behaviorSel := widget.NewSelect(BehaviorCategories, nil)
+        behaviorSel.PlaceHolder = "Категория комментария..."
+
+        // Teacher: quick comment templates (changes when category is selected)
+        quickCommentSel := widget.NewSelect([]string{}, nil)
+        quickCommentSel.PlaceHolder = "Выберите шаблон комментария..."
+
+        behaviorSel.OnChanged = func(cat string) {
+                templates := BehaviorTemplates[BehaviorCategory(cat)]
+                opts := make([]string, len(templates))
+                copy(opts, templates)
+                quickCommentSel.Options = opts
+                quickCommentSel.Refresh()
+                quickCommentSel.SetSelectedIndex(0)
+        }
+
+        // Teacher: custom comment entry
+        commentEntry := widget.NewMultiLineEntry()
+        commentEntry.SetPlaceHolder("Введите комментарий о поведении ученика...\nИли выберите шаблон выше")
+        commentEntry.Wrapping = fyne.TextWrapWord
+
+        // When a quick template is selected, fill the entry
+        quickCommentSel.OnChanged = func(selected string) {
+                if selected != "" {
+                        commentEntry.SetText(selected)
+                }
+        }
+
+        // Diligence selector (auto-set from behavior category, but can be overridden)
+        diligenceSel := widget.NewSelect(DiligenceMarks, nil)
+        diligenceSel.PlaceHolder = "Прилежание..."
+        if entry.DiligenceMark != "" {
+                diligenceSel.SetSelected(entry.DiligenceMark)
+        }
+
+        // Auto-set diligence when behavior category changes
+        origBehaviorChanged := behaviorSel.OnChanged
+        behaviorSel.OnChanged = func(cat string) {
+                origBehaviorChanged(cat)
+                if d, ok := BehaviorToDiligence[BehaviorCategory(cat)]; ok {
+                        diligenceSel.SetSelected(d)
+                }
+        }
+
+        // Teacher: write comment + set diligence button
+        writeCommentBtn := widget.NewButton("Написать комментарий и прилежание", func() {
+                comment := commentEntry.Text
+                diligence := diligenceSel.Selected
+                if comment == "" && diligence == "" {
+                        dialog.ShowInformation("Внимание", "Напишите комментарий или выберите прилежание", dt.controller.GetWindow())
+                        return
+                }
                 dlg.Hide()
+                go dt.writeCommentAndDiligence(entry.DiaryID, diligence, comment, idx)
+        })
+        writeCommentBtn.Importance = widget.HighImportance
+
+        // Parent: sign button
+        parentBtn := widget.NewButton("Подпись родителей", func() {
+                dlg.Hide()
+                go dt.signDiary(entry.DiaryID, "parent", idx)
         })
         if entry.ParentSigned {
                 parentBtn.Disable()
-                parentBtn.SetText("✓ Уже подписано (родители)")
+                parentBtn.SetText("Уже подписано (родители)")
         }
 
-        // Manager signature button
+        // Manager: sign button
         managerBtn := widget.NewButton("Подпись руководителя", func() {
-                go dt.signDiary(entry.DiaryID, "manager", idx)
                 dlg.Hide()
+                go dt.signDiary(entry.DiaryID, "manager", idx)
         })
         if entry.ManagerSigned {
                 managerBtn.Disable()
-                managerBtn.SetText("✓ Уже подписано (руководитель)")
+                managerBtn.SetText("Уже подписано (руководитель)")
         }
 
-        // Set diligence button
-        diligenceBtn := widget.NewButton("Установить прилежание", func() {
-                if diligenceSel.Selected == "" {
-                        dialog.ShowInformation("Внимание", "Выберите оценку прилежания", dt.controller.GetWindow())
-                        return
-                }
-                go dt.setDiligence(entry.DiaryID, diligenceSel.Selected, idx)
-                dlg.Hide()
-        })
-
+        // --- LAYOUT ---
         content := container.NewVBox(
-                groupLabel,
-                subjectLabel,
-                quarterLabel,
+                headerLabel,
                 widget.NewSeparator(),
-                currentDiligenceLabel,
-                container.NewHBox(widget.NewLabel("Новое прилежание:"), diligenceSel),
-                diligenceBtn,
+                // Conversation area
+                widget.NewLabelWithStyle("Переписка:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+                teacherBubble,
+                parentBubble,
                 widget.NewSeparator(),
+                // Signature status
                 parentStatusText,
-                parentBtn,
                 managerStatusText,
-                managerBtn,
+                widget.NewSeparator(),
+                // Teacher action area
+                widget.NewLabelWithStyle("Действия учителя:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+                container.NewHBox(widget.NewLabel("Категория:"), behaviorSel),
+                container.NewHBox(widget.NewLabel("Шаблон:"), quickCommentSel),
+                commentEntry,
+                container.NewHBox(widget.NewLabel("Прилежание:"), diligenceSel),
+                writeCommentBtn,
+                widget.NewSeparator(),
+                // Signature action area
+                widget.NewLabelWithStyle("Подписи:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+                container.NewHBox(parentBtn, managerBtn),
         )
 
-        dialogTitle := fmt.Sprintf("Дневник: %s — %s", entry.GroupName, entry.SubjectName)
+        dialogTitle := fmt.Sprintf("Дневник: %s", entry.SubjectName)
         dlg = dialog.NewCustom(dialogTitle, "Закрыть", content, dt.controller.GetWindow())
         dlg.Show()
+}
+
+// writeCommentAndDiligence sends a teacher comment and diligence mark for a diary.
+func (dt *DiariesTab) writeCommentAndDiligence(diaryID int, diligence string, comment string, idx int) {
+        fyne.Do(func() {
+                dt.statusLabel.SetText("Запись комментария...")
+        })
+
+        var err error
+        apiClient := dt.controller.GetClient()
+
+        if diligence != "" && comment != "" {
+                // Set diligence with comment in one call
+                err = apiClient.SetDiaryDiligenceWithComment(diaryID, diligence, comment)
+        } else if diligence != "" {
+                err = apiClient.SetDiaryDiligence(diaryID, diligence)
+        } else if comment != "" {
+                // Comment only — set with current or default diligence
+                err = apiClient.SetDiaryDiligenceWithComment(diaryID, "Хорошо", comment)
+        }
+
+        fyne.Do(func() {
+                if err != nil {
+                        dialog.ShowError(fmt.Errorf("Ошибка записи: %v", err), dt.controller.GetWindow())
+                        dt.statusLabel.SetText("Ошибка записи комментария")
+                } else {
+                        dt.statusLabel.SetText("Комментарий записан")
+                        go dt.loadDiaries()
+                }
+        })
 }
 
 // signDiary signs a diary entry with the specified sign type.
@@ -413,28 +591,9 @@ func (dt *DiariesTab) signDiary(diaryID int, signType string, idx int) {
         })
 }
 
-// setDiligence sets the diligence mark for a diary entry.
-func (dt *DiariesTab) setDiligence(diaryID int, diligenceMark string, idx int) {
-        fyne.Do(func() {
-                dt.statusLabel.SetText(fmt.Sprintf("Установка прилежания: %s...", diligenceMark))
-        })
-
-        err := dt.controller.GetClient().SetDiaryDiligence(diaryID, diligenceMark)
-
-        fyne.Do(func() {
-                if err != nil {
-                        dialog.ShowError(fmt.Errorf("Ошибка установки прилежания: %v", err), dt.controller.GetWindow())
-                        dt.statusLabel.SetText("Ошибка установки прилежания")
-                } else {
-                        dt.statusLabel.SetText(fmt.Sprintf("Прилежание установлено: %s", diligenceMark))
-                        go dt.loadDiaries()
-                }
-        })
-}
-
-// onBatchSignAll signs all unsigned diaries with a random diligence combination.
-// It picks one diligence mark for ALL diaries, sets it, then signs parent AND manager.
-func (dt *DiariesTab) onBatchSignAll() {
+// onBatchSignWithCategory signs all unsigned diaries with a specific behavior category.
+// This creates a comment from the category's template pool and sets the matching diligence.
+func (dt *DiariesTab) onBatchSignWithCategory(category BehaviorCategory) {
         if len(dt.diaries) == 0 {
                 dialog.ShowInformation("Внимание", "Нет дневников для подписания", dt.controller.GetWindow())
                 return
@@ -453,24 +612,35 @@ func (dt *DiariesTab) onBatchSignAll() {
                 return
         }
 
-        // Pick one random diligence combination
-        chosenDiligence := RandomDiligenceCombo()
+        diligence := BehaviorToDiligence[category]
+        // Preview the first template as example
+        templates := BehaviorTemplates[category]
+        exampleComment := ""
+        if len(templates) > 0 {
+                exampleComment = templates[0]
+        }
 
         confirmMsg := fmt.Sprintf(
-                "Будет установлено прилежание «%s» для %d дневников(я)\nи подписаны все неподписанные записи.\n\nПродолжить?",
-                chosenDiligence, len(unsigned),
+                "Будет установлено:\n"+
+                        "  Прилежание: «%s»\n"+
+                        "  Категория комментария: «%s»\n"+
+                        "  Пример комментария: «%s»\n\n"+
+                        "Для %d дневников(я) будут записаны комментарии по порядку\n"+
+                        "и подписаны все неподписанные записи.\n\n"+
+                        "Продолжить?",
+                diligence, string(category), exampleComment, len(unsigned),
         )
 
         dialog.ShowConfirm("Подписать все", confirmMsg, func(ok bool) {
                 if !ok {
                         return
                 }
-                go dt.executeBatchSign(unsigned, chosenDiligence)
+                go dt.executeBatchSignWithComments(unsigned, category, diligence)
         }, dt.controller.GetWindow())
 }
 
-// executeBatchSign performs the batch signing operation.
-func (dt *DiariesTab) executeBatchSign(unsigned []client.DiaryEntry, diligence string) {
+// executeBatchSignWithComments performs the batch signing operation with behavior comments.
+func (dt *DiariesTab) executeBatchSignWithComments(unsigned []client.DiaryEntry, category BehaviorCategory, diligence string) {
         total := len(unsigned)
         apiClient := dt.controller.GetClient()
 
@@ -480,11 +650,21 @@ func (dt *DiariesTab) executeBatchSign(unsigned []client.DiaryEntry, diligence s
                         dt.statusLabel.SetText(progress)
                 })
 
-                // Set diligence if not set
+                // Set diligence with a sequential behavior comment
+                comment := SequentialBehaviorComment(category, i)
+
                 if entry.DiligenceMark == "" {
-                        if err := apiClient.SetDiaryDiligence(entry.DiaryID, diligence); err != nil {
+                        if err := apiClient.SetDiaryDiligenceWithComment(entry.DiaryID, diligence, comment); err != nil {
                                 fyne.Do(func() {
                                         dt.statusLabel.SetText(fmt.Sprintf("Ошибка установки прилежания (дневник %d): %v", entry.DiaryID, err))
+                                })
+                                continue
+                        }
+                } else if entry.TeacherComment == "" {
+                        // Diligence already set, just add the comment
+                        if err := apiClient.SetDiaryDiligenceWithComment(entry.DiaryID, entry.DiligenceMark, comment); err != nil {
+                                fyne.Do(func() {
+                                        dt.statusLabel.SetText(fmt.Sprintf("Ошибка записи комментария (дневник %d): %v", entry.DiaryID, err))
                                 })
                                 continue
                         }
@@ -512,16 +692,13 @@ func (dt *DiariesTab) executeBatchSign(unsigned []client.DiaryEntry, diligence s
         }
 
         fyne.Do(func() {
-                dt.statusLabel.SetText(fmt.Sprintf("Готово! Обработано %d дневников (прилежание: %s)", total, diligence))
+                dt.statusLabel.SetText(fmt.Sprintf("Готово! Обработано %d дневников (прилежание: %s, категория: %s)", total, diligence, string(category)))
                 go dt.loadDiaries()
         })
 }
 
 // Refresh updates the tab with new data from the dashboard context.
-// It receives students, group, subject, and quarter from the dashboard
-// and triggers a reload of diaries if the group has changed.
 func (dt *DiariesTab) Refresh(students []client.Student, group *client.JournalGroup, subject *client.Subject, quarter *client.Quarter) {
-        // Update group if provided and different from current
         if group != nil && (dt.selectedGroup == nil || dt.selectedGroup.ID != group.ID) {
                 dt.selectedGroup = group
                 go dt.loadDiaries()

@@ -484,14 +484,18 @@ func (c *EdonishClient) UpdateAssignment(dateID string, topic, homework string) 
 
 // DiaryEntry represents a diary record for a class.
 type DiaryEntry struct {
-        DiaryID       int    `json:"diaryId"`
-        GroupID       int    `json:"groupId"`
-        GroupName     string `json:"groupName"`
-        SubjectName   string `json:"subjectName"`
-        QuarterName   string `json:"quarterName"`
-        DiligenceMark string `json:"diligenceMark"` // "Отличный","Хорошо","Удовлетворительный","Неудовлетворительный"
-        ParentSigned  bool   `json:"parentSigned"`
-        ManagerSigned bool   `json:"managerSigned"`
+        DiaryID          int    `json:"diaryId"`
+        GroupID          int    `json:"groupId"`
+        GroupName        string `json:"groupName"`
+        SubjectName      string `json:"subjectName"`
+        QuarterName      string `json:"quarterName"`
+        DiligenceMark    string `json:"diligenceMark"`    // "Отличный","Хорошо","Удовлетворительный","Неудовлетворительно"
+        TeacherComment   string `json:"teacherComment"`   // Teacher's note about the student
+        ParentComment    string `json:"parentComment"`    // Parent's response note
+        ParentSigned     bool   `json:"parentSigned"`
+        ManagerSigned    bool   `json:"managerSigned"`
+        StudentLastName  string `json:"studentLastName"`  // Student's last name
+        StudentFirstName string `json:"studentFirstName"` // Student's first name
 }
 
 // DiarySignRequest is the body for signing a diary.
@@ -504,6 +508,7 @@ type DiarySignRequest struct {
 type DiaryDiligenceRequest struct {
         DiaryID       int    `json:"diary_id"`
         DiligenceMark string `json:"diligence_mark"`
+        Comment       string `json:"comment,omitempty"` // Teacher's behavior comment (optional)
 }
 
 // TopicEntry represents a topic for a date.
@@ -576,9 +581,15 @@ func (c *EdonishClient) SignDiary(diaryID int, signType string) error {
 
 // SetDiaryDiligence sets the diligence mark on a diary.
 func (c *EdonishClient) SetDiaryDiligence(diaryID int, diligenceMark string) error {
+        return c.SetDiaryDiligenceWithComment(diaryID, diligenceMark, "")
+}
+
+// SetDiaryDiligenceWithComment sets the diligence mark and optional teacher comment on a diary.
+func (c *EdonishClient) SetDiaryDiligenceWithComment(diaryID int, diligenceMark string, comment string) error {
         reqBody := DiaryDiligenceRequest{
                 DiaryID:       diaryID,
                 DiligenceMark: diligenceMark,
+                Comment:       comment,
         }
 
         u := c.buildURL("/diaries/diligence", nil)

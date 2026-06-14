@@ -14,12 +14,12 @@ import (
 )
 
 // qualityLevels defines the available quality levels for sequential topic generation.
-// These map to keys in the shared TopicTemplates variable (defined in helpers.go).
+// These must match keys in the shared TopicTemplates variable (defined in helpers.go).
 var qualityLevels = []string{
         "Отличный",
         "Хорошо",
         "Удовлетворительно",
-        "Плохо",
+        "Неудовлетворительно",
 }
 
 // TopicsTab manages the Topics (Темы) tab with CRUD and sequential topic generation.
@@ -352,10 +352,9 @@ func (t *TopicsTab) rebuildTopicsList() {
                         hwLabel.Wrapping = fyne.TextWrapWord
                         hwLabel.TextStyle = fyne.TextStyle{Italic: true}
 
-                        left := container.NewVBox(dateLabel, dayLabel)
-                        right := container.NewVBox(topicLabel, hwLabel)
-                        row := container.NewBorder(nil, nil, left, nil, right)
-                        return container.NewPadded(row)
+                        topRow := container.NewHBox(dateLabel, dayLabel)
+                        bottomRow := container.NewHBox(topicLabel, hwLabel)
+                        return container.NewVBox(topRow, bottomRow)
                 },
                 func(id widget.ListItemID, cell fyne.CanvasObject) {
                         if id < 0 || id >= len(dates) {
@@ -363,15 +362,14 @@ func (t *TopicsTab) rebuildTopicsList() {
                         }
                         day := dates[id]
 
-                        pad := cell.(*fyne.Container)
-                        border := pad.Objects[0].(*fyne.Container)
-                        left := border.Objects[0].(*fyne.Container)
-                        right := border.Objects[1].(*fyne.Container)
+                        vbox := cell.(*fyne.Container)
+                        topRow := vbox.Objects[0].(*fyne.Container)
+                        bottomRow := vbox.Objects[1].(*fyne.Container)
 
-                        dateLabel := left.Objects[0].(*widget.Label)
-                        dayLabel := left.Objects[1].(*widget.Label)
-                        topicLabel := right.Objects[0].(*widget.Label)
-                        hwLabel := right.Objects[1].(*widget.Label)
+                        dateLabel := topRow.Objects[0].(*widget.Label)
+                        dayLabel := topRow.Objects[1].(*widget.Label)
+                        topicLabel := bottomRow.Objects[0].(*widget.Label)
+                        hwLabel := bottomRow.Objects[1].(*widget.Label)
 
                         dateLabel.SetText(day.AssignmentDate)
                         dayLabel.SetText(day.WeekdayName)
