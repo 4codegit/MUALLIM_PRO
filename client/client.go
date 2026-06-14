@@ -482,33 +482,40 @@ func (c *EdonishClient) UpdateAssignment(dateID string, topic, homework string) 
 
 // --- Diary types ---
 
-// DiaryEntry represents a diary record for a class.
-type DiaryEntry struct {
-        DiaryID          int    `json:"diaryId"`
-        GroupID          int    `json:"groupId"`
-        GroupName        string `json:"groupName"`
-        SubjectName      string `json:"subjectName"`
-        QuarterName      string `json:"quarterName"`
-        DiligenceMark    string `json:"diligenceMark"`    // "Отличный","Хорошо","Удовлетворительный","Неудовлетворительно"
-        TeacherComment   string `json:"teacherComment"`   // Teacher's note about the student
-        ParentComment    string `json:"parentComment"`    // Parent's response note
-        ParentSigned     bool   `json:"parentSigned"`
-        ManagerSigned    bool   `json:"managerSigned"`
-        StudentLastName  string `json:"studentLastName"`  // Student's last name
-        StudentFirstName string `json:"studentFirstName"` // Student's first name
+// DiaryCommentRequest is the body for creating a diary comment (signature/note).
+// This uses the real edonish.tj API: POST /journal/comment
+type DiaryCommentRequest struct {
+        GroupSubgroupStudentID int    `json:"group_subgroup_student_id"`
+        ScheduleDateID         string `json:"schedule_date_id"`
+        QuarterPropertyID      int    `json:"quarter_property_id"`
+        Comment                string `json:"comment"` // Teacher's note, diligence mark, or signature
 }
 
-// DiarySignRequest is the body for signing a diary.
-type DiarySignRequest struct {
-        DiaryID  int    `json:"diary_id"`
-        SignType string `json:"sign_type"` // "parent" or "manager"
+// QuarterMarkCreateRequest is the body for creating a quarter mark.
+// Uses POST /journal/10_point_quarter_mark/create
+type QuarterMarkCreateRequest struct {
+        GroupSubgroupStudentID int    `json:"group_subgroup_student_id"`
+        QuarterPropertyID      int    `json:"quarter_property_id"`
+        Mark                   int    `json:"mark"`
+        MarkID                 int    `json:"mark_id"` // In 10-point system, mark_id == mark
+        SubjectID              int    `json:"subject_id"`
+        CurriculumPropertyID   int    `json:"curriculum_property_id"`
 }
 
-// DiaryDiligenceRequest is the body for setting diligence mark.
-type DiaryDiligenceRequest struct {
-        DiaryID       int    `json:"diary_id"`
-        DiligenceMark string `json:"diligence_mark"`
-        Comment       string `json:"comment,omitempty"` // Teacher's behavior comment (optional)
+// SemesterMarkCreateRequest is the body for creating a semester mark.
+// Uses POST /journal/10_point_semester/create
+type SemesterMarkCreateRequest struct {
+        GroupSubgroupStudentID int `json:"group_subgroup_student_id"`
+        SemesterPropertyID     int `json:"semester_property_id"`
+        Mark                   int `json:"mark"`
+}
+
+// YearMarkCreateRequest is the body for creating a year mark.
+// Uses POST /journal/10_point_year/create
+type YearMarkCreateRequest struct {
+        GroupSubgroupStudentID int `json:"group_subgroup_student_id"`
+        YearPropertyID         int `json:"year_property_id"`
+        Mark                   int `json:"mark"`
 }
 
 // TopicEntry represents a topic for a date.
@@ -537,39 +544,21 @@ type UpdateFinalGradeRequest struct {
         NewMark int    `json:"new_mark"`
 }
 
-// --- Diary & Topic methods ---
+// --- Diary (Comment) methods ---
+// The edonish.tj platform uses /journal/comment for diary notes and signatures.
+// Diary data comes from /journal/students — each student has marks and comments per date.
 
-// GetDiaries fetches diary entries for a group.
-func (c *EdonishClient) GetDiaries(groupID int) ([]DiaryEntry, error) {
-        params := map[string]string{
-                "group_id": strconv.Itoa(groupID),
-        }
-        u := c.buildURL("/diaries", params)
-        req, err := http.NewRequest("GET", u, nil)
-        if err != nil {
-                return nil, err
-        }
-
-        respBody, _, err := c.doRequest(req, nil)
-        if err != nil {
-                return nil, err
+// CreateDiaryComment creates a comment (teacher note, diligence, or signature) for a student on a date.
+// This is the real edonish.tj API: POST /journal/comment
+func (c *EdonishClient) CreateDiaryComment(studentID int, scheduleDateID string, quarterPropertyID int, comment string) error {
+        reqBody := DiaryCommentRequest{
+                GroupSubgroupStudentID: studentID,
+                ScheduleDateID:         scheduleDateID,
+                QuarterPropertyID:      quarterPropertyID,
+                Comment:                comment,
         }
 
-        var diaries []DiaryEntry
-        if err := json.Unmarshal(respBody, &diaries); err != nil {
-                return nil, err
-        }
-        return diaries, nil
-}
-
-// SignDiary signs a diary as parent or manager.
-func (c *EdonishClient) SignDiary(diaryID int, signType string) error {
-        reqBody := DiarySignRequest{
-                DiaryID:  diaryID,
-                SignType: signType,
-        }
-
-        u := c.buildURL("/diaries/sign", nil)
+        u := c.buildURL("/journal/comment", nil)
         req, err := http.NewRequest("POST", u, nil)
         if err != nil {
                 return err
@@ -579,20 +568,84 @@ func (c *EdonishClient) SignDiary(diaryID int, signType string) error {
         return err
 }
 
-// SetDiaryDiligence sets the diligence mark on a diary.
-func (c *EdonishClient) SetDiaryDiligence(diaryID int, diligenceMark string) error {
-        return c.SetDiaryDiligenceWithComment(diaryID, diligenceMark, "")
-}
+// --- Final Grades methods ---
 
-// SetDiaryDiligenceWithComment sets the diligence mark and optional teacher comment on a diary.
-func (c *EdonishClient) SetDiaryDiligenceWithComment(diaryID int, diligenceMark string, comment string) error {
-        reqBody := DiaryDiligenceRequest{
-                DiaryID:       diaryID,
-                DiligenceMark: diligenceMark,
-                Comment:       comment,
+// GetFinalGradesStudents fetches students with final marks using the correct API.
+// Uses GET /journal/students/final with curriculum_property_id instead of quarter_property_id.
+func (c *EdonishClient) GetFinalGradesStudents(groupID, curriculumPropertyID int) ([]Student, error) {
+        params := map[string]string{
+                "group_id":               strconv.Itoa(groupID),
+                "curriculum_property_id": strconv.Itoa(curriculumPropertyID),
+        }
+        u := c.buildURL("/journal/students/final", params)
+        req, err := http.NewRequest("GET", u, nil)
+        if err != nil {
+                return nil, err
         }
 
-        u := c.buildURL("/diaries/diligence", nil)
+        respBody, statusCode, err := c.doRequest(req, nil)
+        if err != nil {
+                return nil, fmt.Errorf("ошибка загрузки итоговых оценок (код %d): %v", statusCode, err)
+        }
+
+        var students []Student
+        if err := json.Unmarshal(respBody, &students); err != nil {
+                return nil, fmt.Errorf("ошибка разбора ответа: %v (первые 200 символов: %s)", err, string(respBody[:min(len(respBody), 200)]))
+        }
+        return students, nil
+}
+
+// CreateQuarterMark creates or updates a quarter mark for a student.
+// Uses POST /journal/10_point_quarter_mark/create
+func (c *EdonishClient) CreateQuarterMark(studentID, quarterPropertyID, mark, subjectID, curriculumPropertyID int) error {
+        reqBody := QuarterMarkCreateRequest{
+                GroupSubgroupStudentID: studentID,
+                QuarterPropertyID:      quarterPropertyID,
+                Mark:                   mark,
+                MarkID:                 mark, // In 10-point system, mark_id == mark
+                SubjectID:              subjectID,
+                CurriculumPropertyID:   curriculumPropertyID,
+        }
+
+        u := c.buildURL("/journal/10_point_quarter_mark/create", nil)
+        req, err := http.NewRequest("POST", u, nil)
+        if err != nil {
+                return err
+        }
+
+        _, _, err = c.doRequest(req, reqBody)
+        return err
+}
+
+// CreateSemesterMark creates or updates a semester mark for a student.
+// Uses POST /journal/10_point_semester/create
+func (c *EdonishClient) CreateSemesterMark(studentID, semesterPropertyID, mark int) error {
+        reqBody := SemesterMarkCreateRequest{
+                GroupSubgroupStudentID: studentID,
+                SemesterPropertyID:     semesterPropertyID,
+                Mark:                   mark,
+        }
+
+        u := c.buildURL("/journal/10_point_semester/create", nil)
+        req, err := http.NewRequest("POST", u, nil)
+        if err != nil {
+                return err
+        }
+
+        _, _, err = c.doRequest(req, reqBody)
+        return err
+}
+
+// CreateYearMark creates or updates a year mark for a student.
+// Uses POST /journal/10_point_year/create
+func (c *EdonishClient) CreateYearMark(studentID, yearPropertyID, mark int) error {
+        reqBody := YearMarkCreateRequest{
+                GroupSubgroupStudentID: studentID,
+                YearPropertyID:         yearPropertyID,
+                Mark:                   mark,
+        }
+
+        u := c.buildURL("/journal/10_point_year/create", nil)
         req, err := http.NewRequest("POST", u, nil)
         if err != nil {
                 return err
@@ -662,59 +715,7 @@ func (c *EdonishClient) UpdateTopic(dateID, topic string) error {
         return err
 }
 
-// GetFinalGrades fetches students with their quarter/final marks.
-// quarterID is optional (0 means fetch all quarters).
-func (c *EdonishClient) GetFinalGrades(groupID, subjectID int) ([]Student, error) {
-        params := map[string]string{
-                "group_id":   strconv.Itoa(groupID),
-                "subject_id": strconv.Itoa(subjectID),
-        }
-        u := c.buildURL("/journal/students", params)
-        req, err := http.NewRequest("GET", u, nil)
-        if err != nil {
-                return nil, err
-        }
-
-        respBody, statusCode, err := c.doRequest(req, nil)
-        if err != nil {
-                // If the request without quarter_property_id fails, it might need it.
-                // Log the error for debugging but return it.
-                return nil, fmt.Errorf("ошибка загрузки итоговых оценок (код %d): %v", statusCode, err)
-        }
-
-        var students []Student
-        if err := json.Unmarshal(respBody, &students); err != nil {
-                return nil, fmt.Errorf("ошибка разбора ответа итоговых оценок: %v (ответ: %s)", err, string(respBody[:min(len(respBody), 200)]))
-        }
-        return students, nil
-}
-
-// GetFinalGradesWithQuarter fetches students with their quarter/final marks for a specific quarter.
-func (c *EdonishClient) GetFinalGradesWithQuarter(groupID, subjectID, quarterID int) ([]Student, error) {
-        params := map[string]string{
-                "group_id":            strconv.Itoa(groupID),
-                "subject_id":          strconv.Itoa(subjectID),
-                "quarter_property_id": strconv.Itoa(quarterID),
-        }
-        u := c.buildURL("/journal/students", params)
-        req, err := http.NewRequest("GET", u, nil)
-        if err != nil {
-                return nil, err
-        }
-
-        respBody, _, err := c.doRequest(req, nil)
-        if err != nil {
-                return nil, err
-        }
-
-        var students []Student
-        if err := json.Unmarshal(respBody, &students); err != nil {
-                return nil, err
-        }
-        return students, nil
-}
-
-// UpdateFinalGrade updates a quarter/semester/year mark.
+// UpdateFinalGrade updates a quarter/semester/year mark via the generic quarter_mark/update endpoint.
 func (c *EdonishClient) UpdateFinalGrade(markID string, newMark int) error {
         reqBody := UpdateFinalGradeRequest{
                 MarkID:  markID,
