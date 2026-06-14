@@ -20,8 +20,12 @@ import (
 type Dashboard struct {
         controller  Controller
         container   *fyne.Container
-        tabs        *container.AppTabs
         statusLabel *widget.Label
+
+        // Navigation state
+        homePage     *fyne.Container
+        currentPage  fyne.CanvasObject
+        navStack     []fyne.CanvasObject
 
         // Filters state
         classSel   *widget.Select
@@ -79,16 +83,11 @@ func (d *Dashboard) buildUI() {
         d.diariesTab = NewDiariesTab(d.controller)
         d.finalGradesTab = NewFinalGradesTab(d.controller)
 
-        d.tabs = container.NewAppTabs(
-                container.NewTabItem("📋 Журнал", d.gradesContainer),           // Journal (existing grades)
-                container.NewTabItem("📅 Расписание", d.scheduleContainer),     // Schedule (existing)
-                container.NewTabItem("📝 ДЗ", d.homeworkContainer),            // Homework (existing, shorter name)
-                container.NewTabItem("📖 Темы", d.topicsTab.Container()),      // Topics (NEW)
-                container.NewTabItem("📓 Дневник", d.diariesTab.Container()),  // Diaries (NEW)
-                container.NewTabItem("🏆 Итоговые", d.finalGradesTab.Container()), // Final Grades (NEW)
-        )
+        // Build the home page with 4 navigation cards
+        d.homePage = d.buildHomePage()
+        d.currentPage = d.homePage
 
-        // Fixed header + filters at top, status at bottom, tabs fill remaining space
+        // Fixed header + filters at top, status at bottom, content fills remaining space
         topSection := container.NewVBox(header, filters, widget.NewSeparator())
 
         d.container = container.NewBorder(
@@ -96,7 +95,7 @@ func (d *Dashboard) buildUI() {
                 d.statusLabel,
                 nil,
                 nil,
-                d.tabs,
+                d.homePage,
         )
 }
 
@@ -172,6 +171,150 @@ func (d *Dashboard) buildFilters() *fyne.Container {
                 d.quarterSel,
                 d.refreshBtn,
         )
+}
+
+// ------------------------------------------
+// HOME PAGE WITH NAVIGATION CARDS
+// ------------------------------------------
+
+// navCard creates a clickable card with icon, title and subtitle.
+func navCard(icon, title, subtitle string, accent color.Color, onTap func()) *fyne.Container {
+        iconText := canvas.NewText(icon, color.White)
+        iconText.TextSize = 32
+        iconText.Alignment = fyne.TextAlignCenter
+
+        titleText := canvas.NewText(title, color.White)
+        titleText.TextStyle = fyne.TextStyle{Bold: true}
+        titleText.TextSize = 16
+        titleText.Alignment = fyne.TextAlignCenter
+
+        subText := canvas.NewText(subtitle, color.NRGBA{R: 220, G: 220, B: 220, A: 255})
+        subText.TextSize = 11
+        subText.Alignment = fyne.TextAlignCenter
+
+        content := container.NewVBox(
+                container.NewCenter(iconText),
+                container.NewCenter(titleText),
+                container.NewCenter(subText),
+        )
+
+        bg := canvas.NewRectangle(accent)
+        bg.SetMinSize(fyne.NewSize(180, 140))
+        bg.CornerRadius = 12
+
+        cardStack := container.NewStack(bg, container.NewPadded(content))
+
+        // Tappable overlay to handle clicks
+        tapOverlay := newTapOverlay(onTap)
+
+        return container.NewStack(cardStack, tapOverlay)
+}
+
+func (d *Dashboard) buildHomePage() *fyne.Container {
+        welcomeText := canvas.NewText("eDonish Auto", color.NRGBA{R: 30, G: 58, B: 95, A: 255})
+        welcomeText.TextStyle = fyne.TextStyle{Bold: true}
+        welcomeText.TextSize = 22
+        welcomeText.Alignment = fyne.TextAlignCenter
+
+        subtitleText := canvas.NewText("Выберите раздел для работы", theme.DisabledColor())
+        subtitleText.TextSize = 13
+        subtitleText.Alignment = fyne.TextAlignCenter
+
+        headerSection := container.NewVBox(
+                container.NewCenter(welcomeText),
+                container.NewCenter(subtitleText),
+                widget.NewSeparator(),
+        )
+
+        // Colors for each section card
+        blue := color.NRGBA{R: 37, G: 99, B: 235, A: 255}    // Журнал
+        green := color.NRGBA{R: 22, G: 163, B: 74, A: 255}   // Темы и ДЗ
+        orange := color.NRGBA{R: 217, G: 119, B: 6, A: 255}  // Дневник
+        purple := color.NRGBA{R: 124, G: 58, B: 237, A: 255} // Итоговые
+
+        cardJournal := navCard("📋", "Журнал", "Оценки и посещаемость", blue, func() {
+                d.navigateTo(d.buildJournalPage())
+        })
+        cardTopics := navCard("📝", "Темы и ДЗ", "Темы уроков и задания", green, func() {
+                d.navigateTo(d.buildTopicsPage())
+        })
+        cardDiary := navCard("📓", "Дневник", "Подписи в дневнике", orange, func() {
+                d.navigateTo(d.buildDiariesPage())
+        })
+        cardFinal := navCard("🏆", "Итоговые", "Итоговые оценки", purple, func() {
+                d.navigateTo(d.buildFinalGradesPage())
+        })
+
+        // 2x2 grid of cards
+        row1 := container.NewGridWithColumns(2, cardJournal, cardTopics)
+        row2 := container.NewGridWithColumns(2, cardDiary, cardFinal)
+        cardsGrid := container.NewVBox(row1, row2)
+
+        return container.NewVBox(
+                headerSection,
+                container.NewCenter(cardsGrid),
+        )
+}
+
+// navigateTo pushes a new page onto the navigation stack and displays it.
+func (d *Dashboard) navigateTo(page fyne.CanvasObject) {
+        d.navStack = append(d.navStack, d.currentPage)
+        d.currentPage = page
+        d.container.Objects[0].(*fyne.Container).Objects[2] = page // center of Border
+        d.container.Refresh()
+}
+
+// navigateBack returns to the previous page on the navigation stack.
+func (d *Dashboard) navigateBack() {
+        if len(d.navStack) == 0 {
+                return
+        }
+        prev := d.navStack[len(d.navStack)-1]
+        d.navStack = d.navStack[:len(d.navStack)-1]
+        d.currentPage = prev
+        d.container.Objects[0].(*fyne.Container).Objects[2] = prev // center of Border
+        d.container.Refresh()
+}
+
+// makeSubPage wraps content with a back button header.
+func (d *Dashboard) makeSubPage(title string, content fyne.CanvasObject) *fyne.Container {
+        backBtn := widget.NewButtonWithIcon("← Назад", theme.NavigateBackIcon(), func() {
+                d.navigateBack()
+        })
+        backBtn.Importance = widget.LowImportance
+
+        titleLabel := canvas.NewText(title, color.NRGBA{R: 30, G: 58, B: 95, A: 255})
+        titleLabel.TextStyle = fyne.TextStyle{Bold: true}
+        titleLabel.TextSize = 16
+
+        pageHeader := container.NewHBox(backBtn, titleLabel)
+        return container.NewBorder(pageHeader, nil, nil, nil, content)
+}
+
+// ------------------------------------------
+// SUB-PAGE BUILDERS
+// ------------------------------------------
+
+func (d *Dashboard) buildJournalPage() *fyne.Container {
+        // Journal has its own sub-tabs: Оценки, Расписание, ДЗ
+        journalTabs := container.NewAppTabs(
+                container.NewTabItem("Оценки", d.gradesContainer),
+                container.NewTabItem("Расписание", d.scheduleContainer),
+                container.NewTabItem("ДЗ", d.homeworkContainer),
+        )
+        return d.makeSubPage("📋 Журнал", journalTabs)
+}
+
+func (d *Dashboard) buildTopicsPage() *fyne.Container {
+        return d.makeSubPage("📝 Темы и ДЗ", d.topicsTab.Container())
+}
+
+func (d *Dashboard) buildDiariesPage() *fyne.Container {
+        return d.makeSubPage("📓 Дневник", d.diariesTab.Container())
+}
+
+func (d *Dashboard) buildFinalGradesPage() *fyne.Container {
+        return d.makeSubPage("🏆 Итоговые оценки", d.finalGradesTab.Container())
 }
 
 func (d *Dashboard) loadJournalOptions() {
