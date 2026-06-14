@@ -663,10 +663,38 @@ func (c *EdonishClient) UpdateTopic(dateID, topic string) error {
 }
 
 // GetFinalGrades fetches students with their quarter/final marks.
+// quarterID is optional (0 means fetch all quarters).
 func (c *EdonishClient) GetFinalGrades(groupID, subjectID int) ([]Student, error) {
         params := map[string]string{
                 "group_id":   strconv.Itoa(groupID),
                 "subject_id": strconv.Itoa(subjectID),
+        }
+        u := c.buildURL("/journal/students", params)
+        req, err := http.NewRequest("GET", u, nil)
+        if err != nil {
+                return nil, err
+        }
+
+        respBody, statusCode, err := c.doRequest(req, nil)
+        if err != nil {
+                // If the request without quarter_property_id fails, it might need it.
+                // Log the error for debugging but return it.
+                return nil, fmt.Errorf("ошибка загрузки итоговых оценок (код %d): %v", statusCode, err)
+        }
+
+        var students []Student
+        if err := json.Unmarshal(respBody, &students); err != nil {
+                return nil, fmt.Errorf("ошибка разбора ответа итоговых оценок: %v (ответ: %s)", err, string(respBody[:min(len(respBody), 200)]))
+        }
+        return students, nil
+}
+
+// GetFinalGradesWithQuarter fetches students with their quarter/final marks for a specific quarter.
+func (c *EdonishClient) GetFinalGradesWithQuarter(groupID, subjectID, quarterID int) ([]Student, error) {
+        params := map[string]string{
+                "group_id":            strconv.Itoa(groupID),
+                "subject_id":          strconv.Itoa(subjectID),
+                "quarter_property_id": strconv.Itoa(quarterID),
         }
         u := c.buildURL("/journal/students", params)
         req, err := http.NewRequest("GET", u, nil)

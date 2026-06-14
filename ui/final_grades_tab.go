@@ -126,7 +126,7 @@ func (t *FinalGradesTab) loadJournalOptions() {
         fyne.Do(func() {
                 t.classSel.Options = classNames
                 t.classSel.Refresh()
-                t.statusLabel.SetText("Выберите класс")
+                t.statusLabel.SetText("Выберите класс и предмет")
                 if len(classNames) > 0 {
                         t.classSel.SetSelectedIndex(0)
                 }
@@ -197,6 +197,8 @@ func (t *FinalGradesTab) onSubjectSelected(selected string) {
 }
 
 // loadData loads students with final grades for the selected class/subject.
+// It first tries without quarter (to get all quarter marks), and if that
+// fails, falls back to using the current quarter.
 func (t *FinalGradesTab) loadData() {
         if t.selectedGroup == nil || t.selectedSubject == nil {
                 return
@@ -206,11 +208,34 @@ func (t *FinalGradesTab) loadData() {
                 t.statusLabel.SetText("Загрузка итоговых оценок...")
         })
 
-        students, err := t.controller.GetClient().GetFinalGrades(t.selectedGroup.ID, t.selectedSubject.SubjectID)
+        apiClient := t.controller.GetClient()
+
+        // Try without quarter_property_id first (gets all quarter marks)
+        students, err := apiClient.GetFinalGrades(t.selectedGroup.ID, t.selectedSubject.SubjectID)
+
+        // If that fails, try with the first available quarter
+        if err != nil && len(t.selectedGroup.Quarters) > 0 {
+                firstQ := t.selectedGroup.Quarters[0]
+                students, err = apiClient.GetFinalGradesWithQuarter(t.selectedGroup.ID, t.selectedSubject.SubjectID, firstQ.ID)
+        }
 
         fyne.Do(func() {
                 if err != nil {
                         t.statusLabel.SetText(fmt.Sprintf("Ошибка загрузки оценок: %v", err))
+                        dialog.ShowError(fmt.Errorf("Ошибка загрузки итоговых оценок: %v", err), t.controller.GetWindow())
+                        return
+                }
+
+                if len(students) == 0 {
+                        t.statusLabel.SetText("Нет учеников для выбранного класса/предмета")
+                        t.gradesContainer.Objects = []fyne.CanvasObject{
+                                widget.NewLabelWithStyle(
+                                        "Нет данных об итоговых оценках.\nВозможно, для этого предмета ещё не выставлены оценки.",
+                                        fyne.TextAlignCenter,
+                                        fyne.TextStyle{Italic: true},
+                                ),
+                        }
+                        t.gradesContainer.Refresh()
                         return
                 }
 
@@ -374,6 +399,11 @@ func (t *FinalGradesTab) onGradeCellTapped(studIdx, markIdx int) {
                 btn := widget.NewButton(strconv.Itoa(gradeVal), func() {
                         if currentMark != nil && currentMark.QuarterMarkID != "" {
                                 go t.updateFinalGrade(currentMark.QuarterMarkID, gradeVal, studIdx, markIdx)
+                        } else {
+                                // No QuarterMarkID — can't update this cell
+                                fyne.Do(func() {
+                                        dialog.ShowInformation("Внимание", "Невозможно установить оценку: нет ID оценки. Возможно, оценка ещё не создана в системе.", t.controller.GetWindow())
+                                })
                         }
                         dlg.Hide()
                 })
