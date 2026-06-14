@@ -7,7 +7,7 @@
 # ============================================
 FROM python:3.12-slim AS base
 
-WORKDIR /app
+WORKDIR /app 
 
 # System deps for CustomTkinter + X11
 RUN apt-get update && apt-get install -y --no-install-recommends \
