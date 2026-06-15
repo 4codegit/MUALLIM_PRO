@@ -4,7 +4,6 @@ import (
         "fmt"
         "image/color"
         "strconv"
-        "time"
 
         "fyne.io/fyne/v2"
         "fyne.io/fyne/v2/canvas"
@@ -401,7 +400,13 @@ func (t *FinalGradesTab) rebuildGradesTable() {
                 }
         }
 
-        t.gradesContainer.Objects = []fyne.CanvasObject{t.gradesTable}
+        t.gradesContainer.Objects = []fyne.CanvasObject{
+                func() fyne.CanvasObject {
+                        scroll := container.NewScroll(t.gradesTable)
+                        scroll.Direction = container.ScrollBoth
+                        return scroll
+                }(),
+        }
         t.gradesContainer.Refresh()
 }
 
@@ -665,26 +670,6 @@ func (t *FinalGradesTab) onSignFinalGrades() {
 func (t *FinalGradesTab) executeSignFinalGrades(diligence, comment string) {
         apiClient := t.controller.GetClient()
 
-        // Find current quarter for date range
-        var startDate, endDate time.Time
-        now := time.Now()
-        for _, q := range t.selectedGroup.Quarters {
-                if q.CurrentQuarter {
-                        sd, err1 := time.Parse("2006-01-02", q.StartDate)
-                        if err1 == nil {
-                                startDate = sd
-                        } else {
-                                startDate = now.AddDate(0, -1, 0)
-                        }
-                        endDate = now
-                        break
-                }
-        }
-        if startDate.IsZero() {
-                startDate = now.AddDate(0, -1, 0)
-                endDate = now
-        }
-
         // Get dates for the current quarter
         var dateIDs []string
         for _, q := range t.selectedGroup.Quarters {
@@ -718,9 +703,6 @@ func (t *FinalGradesTab) executeSignFinalGrades(diligence, comment string) {
 
                 // Pick a random date from available dates
                 dateID := dateIDs[i%len(dateIDs)]
-
-                // Random sign date for display
-                _ = RandomDateInRange(startDate, endDate)
 
                 // Build comment with diligence
                 signComment := fmt.Sprintf("%s. %s", diligence, comment)

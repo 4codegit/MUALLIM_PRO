@@ -100,9 +100,6 @@ func (t *TopicsTab) buildUI() {
         saveBtn := widget.NewButton("Сохранить темы и ДЗ", t.onSaveTopics)
         saveBtn.Importance = widget.HighImportance
 
-        // Current topics preview
-        t.currentTopicsPreview()
-
         // Layout: left side = inputs, right side = current dates preview
         leftPanel := container.NewVBox(
                 topicLabel,
@@ -130,10 +127,6 @@ func (t *TopicsTab) buildUI() {
                 nil, nil,
                 content,
         )
-}
-
-func (t *TopicsTab) currentTopicsPreview() {
-        // Will be updated when data loads
 }
 
 // ------------------------------------------

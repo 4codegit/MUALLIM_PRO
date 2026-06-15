@@ -20,12 +20,10 @@ import (
 // ------------------------------------------
 
 var (
-        colorNavBG      = color.NRGBA{R: 15, G: 23, B: 42, A: 255}  // Slate-900
-        colorCardBlue   = color.NRGBA{R: 37, G: 99, B: 235, A: 255}  // Blue-600
-        colorCardOrange = color.NRGBA{R: 234, G: 88, B: 12, A: 255}  // Orange-600
-        colorCardPurple = color.NRGBA{R: 124, G: 58, B: 237, A: 255} // Violet-600
-        colorAccent     = color.NRGBA{R: 56, G: 189, B: 248, A: 255} // Sky-400
-        colorSurface    = color.NRGBA{R: 248, G: 250, B: 252, A: 255} // Slate-50
+        colorNavBG   = color.NRGBA{R: 15, G: 23, B: 42, A: 255}  // Slate-900
+        colorCardBlue = color.NRGBA{R: 37, G: 99, B: 235, A: 255} // Blue-600
+        colorAccent  = color.NRGBA{R: 56, G: 189, B: 248, A: 255} // Sky-400
+        colorSurface = color.NRGBA{R: 248, G: 250, B: 252, A: 255} // Slate-50
 )
 
 // ------------------------------------------
@@ -40,10 +38,11 @@ type Dashboard struct {
         // Navigation state
         contentStack *fyne.Container
         currentPage  fyne.CanvasObject
-        navStack     []fyne.CanvasObject
 
         // Bottom tab bar
-        tabBar *fyne.Container
+        tabBar      *fyne.Container
+        activeTab   int // 0=Журнал, 1=Темы, 2=Дневник, 3=Итоговые
+        tabButtons  []*widget.Button
 
         // Filters state
         classSel   *widget.Select
@@ -147,7 +146,7 @@ func (d *Dashboard) buildHeader() *fyne.Container {
         appTitle.TextStyle = fyne.TextStyle{Bold: true}
         appTitle.TextSize = 18
 
-        versionTag := canvas.NewText("v5.2", colorAccent)
+        versionTag := canvas.NewText("v5.3", colorAccent)
         versionTag.TextSize = 11
         versionTag.TextStyle = fyne.TextStyle{Bold: true}
 
@@ -212,24 +211,27 @@ func (d *Dashboard) buildFilters() *fyne.Container {
 // ------------------------------------------
 
 func (d *Dashboard) buildTabBar() *fyne.Container {
-        journalBtn := widget.NewButton("Журнал", func() {
-                d.switchTab(d.gradesContainer)
-        })
-        journalBtn.Importance = widget.HighImportance
+        d.tabButtons = make([]*widget.Button, 4)
 
-        topicsBtn := widget.NewButton("Темы и ДЗ", func() {
-                d.switchTab(d.topicsTab.Container())
+        d.tabButtons[0] = widget.NewButton("Журнал", func() {
+                d.switchTab(0, d.gradesContainer)
         })
-
-        diaryBtn := widget.NewButton("Дневник", func() {
-                d.switchTab(d.diariesTab.Container())
+        d.tabButtons[1] = widget.NewButton("Темы и ДЗ", func() {
+                d.switchTab(1, d.topicsTab.Container())
         })
-
-        finalBtn := widget.NewButton("Итоговые", func() {
-                d.switchTab(d.finalGradesTab.Container())
+        d.tabButtons[2] = widget.NewButton("Дневник", func() {
+                d.switchTab(2, d.diariesTab.Container())
+        })
+        d.tabButtons[3] = widget.NewButton("Итоговые", func() {
+                d.switchTab(3, d.finalGradesTab.Container())
         })
 
-        tabRow := container.NewGridWithColumns(4, journalBtn, topicsBtn, diaryBtn, finalBtn)
+        // Set initial active style
+        d.activeTab = 0
+        d.highlightActiveTab()
+
+        tabRow := container.NewGridWithColumns(4,
+                d.tabButtons[0], d.tabButtons[1], d.tabButtons[2], d.tabButtons[3])
 
         // Status label + tab bar
         bottomBox := container.NewVBox(
@@ -243,10 +245,24 @@ func (d *Dashboard) buildTabBar() *fyne.Container {
         return container.NewStack(bg, container.NewPadded(bottomBox))
 }
 
-func (d *Dashboard) switchTab(page fyne.CanvasObject) {
+// highlightActiveTab visually marks the currently active tab button.
+func (d *Dashboard) highlightActiveTab() {
+        for i, btn := range d.tabButtons {
+                if i == d.activeTab {
+                        btn.Importance = widget.HighImportance
+                } else {
+                        btn.Importance = widget.MediumImportance
+                }
+                btn.Refresh()
+        }
+}
+
+func (d *Dashboard) switchTab(idx int, page fyne.CanvasObject) {
+        d.activeTab = idx
         d.currentPage = page
         d.contentStack.Objects = []fyne.CanvasObject{page}
         d.contentStack.Refresh()
+        d.highlightActiveTab()
 }
 
 // ------------------------------------------
@@ -587,8 +603,102 @@ func (d *Dashboard) rebuildGradesTable() {
                 // Don't unselect on single click — keep it selected for arrow keys
         }
 
-        d.gradesContainer.Objects = []fyne.CanvasObject{d.gradesTable}
+        // Wrap table in scroll for cross-platform responsiveness (horizontal + vertical)
+        scrollWrap := container.NewScroll(d.gradesTable)
+        scrollWrap.Direction = container.ScrollBoth
+
+        d.gradesContainer.Objects = []fyne.CanvasObject{scrollWrap}
         d.gradesContainer.Refresh()
+
+        // Install keyboard handler for arrow navigation, Delete key
+        d.installKeyboardHandler()
+}
+
+// ------------------------------------------
+// KEYBOARD HANDLER — Arrow keys + Delete key
+// ------------------------------------------
+
+// installKeyboardHandler sets up arrow key navigation and Delete key on the
+// window's canvas so that the user can move between journal cells and delete
+// grades without reaching for the mouse.
+func (d *Dashboard) installKeyboardHandler() {
+        w := d.controller.GetWindow()
+        if w == nil {
+                return
+        }
+        c := w.Canvas()
+        if c == nil {
+                return
+        }
+
+        c.SetOnTypedKey(func(ev *fyne.KeyEvent) {
+                // Only handle when the journal table is visible
+                if d.gradesTable == nil || d.currentPage != d.gradesContainer {
+                        return
+                }
+
+                switch ev.Name {
+                case fyne.KeyUp:
+                        d.navigateCell(0, -1)
+                case fyne.KeyDown:
+                        d.navigateCell(0, 1)
+                case fyne.KeyLeft:
+                        d.navigateCell(-1, 0)
+                case fyne.KeyRight:
+                        d.navigateCell(1, 0)
+                case fyne.KeyDelete:
+                        d.deleteSelectedCell()
+                }
+        })
+}
+
+// navigateCell moves the selected cell by (dCol, dRow) and selects it.
+// It clamps to valid cell boundaries within the journal table.
+func (d *Dashboard) navigateCell(dCol, dRow int) {
+        if d.gradesTable == nil {
+                return
+        }
+
+        rowCount := len(d.students) + 1 // +1 header
+        numDateCols := len(d.dates)
+        totalCols := 2 + numDateCols + 1
+
+        // If no cell selected yet, start at first data cell
+        if d.selectedCell == nil {
+                start := widget.TableCellID{Row: 1, Col: 2}
+                d.selectedCell = &start
+                d.gradesTable.Select(start)
+                d.deleteBtn.Enable()
+                return
+        }
+
+        newCol := d.selectedCell.Col + dCol
+        newRow := d.selectedCell.Row + dRow
+
+        // Clamp to table bounds
+        if newCol < 0 {
+                newCol = 0
+        }
+        if newCol >= totalCols {
+                newCol = totalCols - 1
+        }
+        if newRow < 0 {
+                newRow = 0
+        }
+        if newRow >= rowCount {
+                newRow = rowCount - 1
+        }
+
+        newID := widget.TableCellID{Row: newRow, Col: newCol}
+        d.selectedCell = &newID
+        d.gradesTable.Select(newID)
+
+        // Enable/disable delete button based on whether it's a grade cell
+        if newRow > 0 && newCol >= 2 && newCol < totalCols-1 {
+                d.deleteBtn.Enable()
+        } else {
+                d.deleteBtn.Disable()
+        }
 }
 
 // ------------------------------------------
