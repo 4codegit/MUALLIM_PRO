@@ -94,21 +94,31 @@ type Day struct {
         WeekdayShortName string `json:"weekdayShortName"`
         SubjectID        int    `json:"subjectId"`
         SubjectName      string `json:"subjectName"`
+        Topic            string `json:"topic"`
+        HomeWork         string `json:"homeWork"`
 }
 
 type Student struct {
-        StudentID    int           `json:"studentId"`
-        LastName     string        `json:"lastName"`
-        FirstName    string        `json:"firstName"`
-        MiddleName   string        `json:"middleName"`
-        GroupID      int           `json:"groupId"`
-        GroupName    string        `json:"groupName"`
-        SubjectMarks []SubjectMark `json:"subjectMarks"`
-        QuarterMarks []QuarterMark `json:"quarterMark"`
+        StudentID     int            `json:"studentId"`
+        LastName      string         `json:"lastName"`
+        FirstName     string         `json:"firstName"`
+        MiddleName    string         `json:"middleName"`
+        GroupID       int            `json:"groupId"`
+        GroupName     string         `json:"groupName"`
+        SubjectMarks  []SubjectMark  `json:"subjectMarks"`
+        QuarterMarks  []QuarterMark  `json:"quarterMark"`
         SemesterMarks []SemesterMark `json:"semesterMark"`
-        YearMark     *YearMark     `json:"yearMark"`
-        AverageScore string        `json:"averageScore"`
-        Access       []AccessInfo  `json:"access"`
+        YearMarks     []YearMark     `json:"yearMark"`
+        AverageScore  string         `json:"averageScore"`
+        Access        []AccessInfo   `json:"access"`
+}
+
+// GetYearMark returns the first year mark if available.
+func (s *Student) GetYearMark() *YearMark {
+        if len(s.YearMarks) > 0 {
+                return &s.YearMarks[0]
+        }
+        return nil
 }
 
 type SubjectMark struct {
@@ -530,6 +540,36 @@ type UpdateFinalGradeRequest struct {
         NewMark int    `json:"new_mark"`
 }
 
+// --- Topic & HomeWork methods ---
+
+// UpdateAssignmentRequest is the body for updating topic and/or homework on a date.
+type UpdateAssignmentRequest struct {
+        ScheduleDateID    string `json:"schedule_date_id"`
+        Topic             string `json:"topic"`
+        HomeWork          string `json:"home_work"`
+        QuarterPropertyID int    `json:"quarter_property_id"`
+}
+
+// UpdateAssignment updates the topic and/or homework for a specific date.
+// Uses POST /journal/assignment/update
+func (c *EdonishClient) UpdateAssignment(scheduleDateID, topic, homeWork string, quarterPropertyID int) error {
+        reqBody := UpdateAssignmentRequest{
+                ScheduleDateID:    scheduleDateID,
+                Topic:             topic,
+                HomeWork:          homeWork,
+                QuarterPropertyID: quarterPropertyID,
+        }
+
+        u := c.buildURL("/journal/assignment/update", nil)
+        req, err := http.NewRequest("POST", u, nil)
+        if err != nil {
+                return err
+        }
+
+        _, _, err = c.doRequest(req, reqBody)
+        return err
+}
+
 // --- Diary (Comment) methods ---
 // The edonish.tj platform uses /journal/comment for diary notes and signatures.
 // Diary data comes from /journal/students — each student has marks and comments per date.
@@ -667,8 +707,9 @@ func (c *EdonishClient) GetFinalGradesAll(groupID, subjectID int, quarters []Qua
                         }
 
                         // Store year mark (from any quarter that has it)
-                        if s.YearMark != nil && fgs.YearMark == nil {
-                                fgs.YearMark = s.YearMark
+                        ym := s.GetYearMark()
+                        if ym != nil && fgs.YearMark == nil {
+                                fgs.YearMark = ym
                         }
                 }
         }

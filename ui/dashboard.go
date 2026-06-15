@@ -62,6 +62,7 @@ type Dashboard struct {
         gradesContainer *fyne.Container
 
         // Tab objects
+        topicsTab      *TopicsTab
         diariesTab     *DiariesTab
         finalGradesTab *FinalGradesTab
 }
@@ -92,6 +93,7 @@ func (d *Dashboard) buildUI() {
                 widget.NewLabelWithStyle("Выберите фильтры для загрузки оценок", fyne.TextAlignCenter, fyne.TextStyle{Italic: true}),
         )
 
+        d.topicsTab = NewTopicsTab(d.controller)
         d.diariesTab = NewDiariesTab(d.controller)
         d.finalGradesTab = NewFinalGradesTab(d.controller)
 
@@ -189,7 +191,7 @@ func (d *Dashboard) buildFilters() *fyne.Container {
 }
 
 // ------------------------------------------
-// HOME PAGE — 3 modern cards
+// HOME PAGE — 4 modern cards
 // ------------------------------------------
 
 func (d *Dashboard) buildHomePage() *fyne.Container {
@@ -211,6 +213,9 @@ func (d *Dashboard) buildHomePage() *fyne.Container {
         cardJournal := modernCard("\U0001F4CB", "Журнал", "Оценки и посещаемость", colorCardBlue, func() {
                 d.navigateTo(d.buildJournalPage())
         })
+        cardTopics := modernCard("\U0001F4DD", "Темы и ДЗ", "Темы уроков и задания", color.NRGBA{R: 16, G: 185, B: 129, A: 255}, func() {
+                d.navigateTo(d.buildTopicsPage())
+        })
         cardDiary := modernCard("\U0001F4D3", "Дневник", "Подписи и комментарии", colorCardOrange, func() {
                 d.navigateTo(d.buildDiariesPage())
         })
@@ -218,8 +223,8 @@ func (d *Dashboard) buildHomePage() *fyne.Container {
                 d.navigateTo(d.buildFinalGradesPage())
         })
 
-        row1 := container.NewGridWithColumns(2, cardJournal, cardDiary)
-        row2 := container.NewGridWithColumns(1, cardFinal)
+        row1 := container.NewGridWithColumns(2, cardJournal, cardTopics)
+        row2 := container.NewGridWithColumns(2, cardDiary, cardFinal)
 
         cardsGrid := container.NewVBox(row1, row2)
 
@@ -302,6 +307,10 @@ func (d *Dashboard) makeSubPage(title string, content fyne.CanvasObject) *fyne.C
 
 func (d *Dashboard) buildJournalPage() *fyne.Container {
         return d.makeSubPage("Журнал — оценки и посещаемость", d.gradesContainer)
+}
+
+func (d *Dashboard) buildTopicsPage() *fyne.Container {
+        return d.makeSubPage("Темы и ДЗ — уроки и задания", d.topicsTab.Container())
 }
 
 func (d *Dashboard) buildDiariesPage() *fyne.Container {
@@ -568,7 +577,7 @@ func (d *Dashboard) rebuildGradesTable() {
         }
         d.gradesTable.SetColumnWidth(totalCols-1, 50) // avg
 
-        // Double-click on a cell → random grade popup
+        // Double-click on student NAME → random fill for ALL dates in quarter
         clickCount := 0
         var lastCellID widget.TableCellID
         d.gradesTable.OnSelected = func(id widget.TableCellID) {
@@ -581,12 +590,12 @@ func (d *Dashboard) rebuildGradesTable() {
 
                 d.gradesTable.Unselect(id)
 
-                if clickCount >= 2 && id.Row > 0 && id.Col >= 2 && id.Col < totalCols-1 {
+                // Double-click on student name column (col 1)
+                if clickCount >= 2 && id.Row > 0 && id.Col == 1 {
                         clickCount = 0
                         studentIdx := id.Row - 1
-                        dateIdx := id.Col - 2
-                        if studentIdx < len(d.students) && dateIdx < len(d.dates) {
-                                d.showRandomGradePopup(studentIdx, dateIdx)
+                        if studentIdx < len(d.students) {
+                                d.showRandomFillForStudent(studentIdx)
                         }
                 }
         }
@@ -596,12 +605,12 @@ func (d *Dashboard) rebuildGradesTable() {
 }
 
 // ------------------------------------------
-// RANDOM GRADE POPUP — appears on double-click
+// RANDOM FILL FOR STUDENT — double-click on name
+// Fills ALL empty dates in the current quarter
 // ------------------------------------------
 
-func (d *Dashboard) showRandomGradePopup(studentIdx, dateIdx int) {
+func (d *Dashboard) showRandomFillForStudent(studentIdx int) {
         student := d.students[studentIdx]
-        date := d.dates[dateIdx]
 
         minEntry := widget.NewEntry()
         minEntry.SetPlaceHolder("2")
@@ -622,12 +631,34 @@ func (d *Dashboard) showRandomGradePopup(studentIdx, dateIdx int) {
         })
         comboSel.PlaceHolder = "Быстрый выбор..."
 
-        header := fmt.Sprintf("%s %s — %s (%s)",
-                student.LastName, student.FirstName,
-                date.WeekdayShortName, date.AssignmentDate[5:])
+        // Count empty dates for this student
+        emptyCount := 0
+        for _, date := range d.dates {
+                hasMark := false
+                for _, sm := range student.SubjectMarks {
+                        if sm.AssignmentDateID == date.AssignmentDateID && sm.ShortName != "" && sm.ShortName != "—" {
+                                hasMark = true
+                                break
+                        }
+                }
+                if !hasMark {
+                        emptyCount++
+                }
+        }
+
+        quarterName := ""
+        if d.selectedQuarter != nil {
+                quarterName = d.selectedQuarter.Name
+        }
+
+        header := fmt.Sprintf("%s %s — %s",
+                student.LastName, student.FirstName, quarterName)
+
+        infoText := fmt.Sprintf("Пустых дат: %d из %d", emptyCount, len(d.dates))
 
         content := container.NewVBox(
                 widget.NewLabelWithStyle(header, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+                widget.NewLabel(infoText),
                 widget.NewSeparator(),
                 widget.NewLabel("Быстрый диапазон:"),
                 comboSel,
@@ -639,11 +670,11 @@ func (d *Dashboard) showRandomGradePopup(studentIdx, dateIdx int) {
                         maxEntry,
                 ),
                 widget.NewSeparator(),
-                widget.NewLabelWithStyle("Будет выставлена случайная оценка в заданном диапазоне",
+                widget.NewLabelWithStyle(fmt.Sprintf("Будут выставлены случайные оценки (%d шт) на все пустые даты", emptyCount),
                         fyne.TextAlignCenter, fyne.TextStyle{Italic: true}),
         )
 
-        dialog.ShowForm("Рандомная оценка", "Поставить", "Отмена", []*widget.FormItem{
+        dialog.ShowForm("Рандомные оценки — все даты", "Заполнить", "Отмена", []*widget.FormItem{
                 widget.NewFormItem("", content),
         }, func(ok bool) {
                 if !ok {
@@ -655,26 +686,57 @@ func (d *Dashboard) showRandomGradePopup(studentIdx, dateIdx int) {
                         dialog.ShowError(fmt.Errorf("Введите корректные числа"), d.controller.GetWindow())
                         return
                 }
+
+                go d.executeRandomFillForStudent(studentIdx, minVal, maxVal)
+        }, d.controller.GetWindow())
+}
+
+func (d *Dashboard) executeRandomFillForStudent(studentIdx, minVal, maxVal int) {
+        student := d.students[studentIdx]
+        apiClient := d.controller.GetClient()
+        quarterID := d.selectedQuarter.ID
+
+        successCount := 0
+        skipCount := 0
+
+        for _, date := range d.dates {
+                // Skip dates that already have a mark
+                hasMark := false
+                for _, sm := range student.SubjectMarks {
+                        if sm.AssignmentDateID == date.AssignmentDateID && sm.ShortName != "" && sm.ShortName != "—" {
+                                hasMark = true
+                                break
+                        }
+                }
+                if hasMark {
+                        skipCount++
+                        continue
+                }
+
                 grade := RandomGradeInRange(minVal, maxVal)
 
-                go func() {
-                        err := d.controller.GetClient().CreateMark(
-                                student.StudentID,
-                                date.AssignmentDateID,
-                                d.selectedQuarter.ID,
-                                grade,
-                        )
-                        fyne.Do(func() {
-                                if err != nil {
-                                        dialog.ShowError(fmt.Errorf("Ошибка: %v", err), d.controller.GetWindow())
-                                } else {
-                                        d.statusLabel.SetText(fmt.Sprintf("Оценка %d поставлена: %s %s — %s",
-                                                grade, student.LastName, student.FirstName, date.AssignmentDate[5:]))
-                                        go d.loadData()
-                                }
-                        })
-                }()
-        }, d.controller.GetWindow())
+                fyne.Do(func() {
+                        d.statusLabel.SetText(fmt.Sprintf("Ставлю %d: %s %s — %s (%d/%d)",
+                                grade, student.LastName, student.FirstName, date.AssignmentDate[5:],
+                                successCount+1, len(d.dates)-skipCount))
+                })
+
+                err := apiClient.CreateMark(
+                        student.StudentID,
+                        date.AssignmentDateID,
+                        quarterID,
+                        grade,
+                )
+                if err == nil {
+                        successCount++
+                }
+        }
+
+        fyne.Do(func() {
+                d.statusLabel.SetText(fmt.Sprintf("Готово: %d оценок для %s %s (пропущено: %d)",
+                        successCount, student.LastName, student.FirstName, skipCount))
+                go d.loadData()
+        })
 }
 
 // comboNames returns list of grade combo names for UI selector.
