@@ -103,9 +103,14 @@ type Student struct {
         LastName     string        `json:"lastName"`
         FirstName    string        `json:"firstName"`
         MiddleName   string        `json:"middleName"`
+        GroupID      int           `json:"groupId"`
+        GroupName    string        `json:"groupName"`
         SubjectMarks []SubjectMark `json:"subjectMarks"`
         QuarterMarks []QuarterMark `json:"quarterMark"`
+        SemesterMarks []SemesterMark `json:"semesterMark"`
+        YearMark     *YearMark     `json:"yearMark"`
         AverageScore string        `json:"averageScore"`
+        Access       []AccessInfo  `json:"access"`
 }
 
 type SubjectMark struct {
@@ -119,6 +124,20 @@ type SubjectMark struct {
 type QuarterMark struct {
         QuarterMarkID string `json:"quarterMarkId"`
         ShortName     string `json:"shortName"`
+}
+
+type SemesterMark struct {
+        SemesterMarkID string `json:"semesterMarkId"`
+        ShortName      string `json:"shortName"`
+}
+
+type YearMark struct {
+        YearMarkID string `json:"yearMarkId"`
+        ShortName  string `json:"shortName"`
+}
+
+type AccessInfo struct {
+        Edit bool `json:"edit"`
 }
 
 type CreateMarkRequest struct {
@@ -570,6 +589,18 @@ func (c *EdonishClient) CreateDiaryComment(studentID int, scheduleDateID string,
 
 // --- Final Grades methods ---
 
+// FinalGradeStudent holds merged final grade data for one student across all periods.
+type FinalGradeStudent struct {
+        StudentID     int
+        LastName      string
+        FirstName     string
+        MiddleName    string
+        AverageScore  string
+        QuarterMarks  [4]QuarterMark  // Q1-Q4
+        SemesterMarks [2]SemesterMark // H1-H2
+        YearMark      *YearMark       // Year
+}
+
 // GetFinalGradesStudents fetches students with final marks using the correct API.
 // Uses GET /journal/students/final with curriculum_property_id instead of quarter_property_id.
 func (c *EdonishClient) GetFinalGradesStudents(groupID, curriculumPropertyID int) ([]Student, error) {
@@ -593,6 +624,70 @@ func (c *EdonishClient) GetFinalGradesStudents(groupID, curriculumPropertyID int
                 return nil, fmt.Errorf("ошибка разбора ответа: %v (первые 200 символов: %s)", err, string(respBody[:min(len(respBody), 200)]))
         }
         return students, nil
+}
+
+// GetFinalGradesAll loads students with ALL final marks by querying each quarter separately.
+// Returns merged FinalGradeStudent structs with Q1-Q4, H1-H2, and Year marks populated.
+func (c *EdonishClient) GetFinalGradesAll(groupID, subjectID int, quarters []Quarter) ([]FinalGradeStudent, error) {
+        if len(quarters) == 0 {
+                return nil, fmt.Errorf("нет четвертей для загрузки итоговых оценок")
+        }
+
+        // studentID -> FinalGradeStudent
+        merged := make(map[int]*FinalGradeStudent)
+        // Track order of first appearance
+        var order []int
+
+        for qi, q := range quarters {
+                students, err := c.GetJournalStudents(groupID, subjectID, q.ID)
+                if err != nil {
+                        // If one quarter fails, continue with others
+                        continue
+                }
+
+                for _, s := range students {
+                        fgs, exists := merged[s.StudentID]
+                        if !exists {
+                                fgs = &FinalGradeStudent{
+                                        StudentID:    s.StudentID,
+                                        LastName:     s.LastName,
+                                        FirstName:    s.FirstName,
+                                        MiddleName:   s.MiddleName,
+                                        AverageScore: s.AverageScore,
+                                }
+                                merged[s.StudentID] = fgs
+                                order = append(order, s.StudentID)
+                        }
+
+                        // Store quarter mark (index 0-3)
+                        if qi < 4 && len(s.QuarterMarks) > 0 {
+                                fgs.QuarterMarks[qi] = s.QuarterMarks[0]
+                        }
+
+                        // Store semester marks
+                        // Q1 (qi=0) and Q2 (qi=1) responses may contain semester 1 mark
+                        // Q3 (qi=2) and Q4 (qi=3) responses may contain semester 2 mark
+                        if len(s.SemesterMarks) > 0 {
+                                if qi <= 1 {
+                                        fgs.SemesterMarks[0] = s.SemesterMarks[0]
+                                } else {
+                                        fgs.SemesterMarks[1] = s.SemesterMarks[0]
+                                }
+                        }
+
+                        // Store year mark (from any quarter that has it)
+                        if s.YearMark != nil && fgs.YearMark == nil {
+                                fgs.YearMark = s.YearMark
+                        }
+                }
+        }
+
+        // Build result in original order
+        result := make([]FinalGradeStudent, 0, len(merged))
+        for _, sid := range order {
+                result = append(result, *merged[sid])
+        }
+        return result, nil
 }
 
 // CreateQuarterMark creates or updates a quarter mark for a student.

@@ -69,3 +69,4 @@ tool-results/
 # Local build sysroot
 .sysroot/
 .libs/
+edonish-auto

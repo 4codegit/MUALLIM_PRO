@@ -16,8 +16,7 @@ import (
 
 // DiariesTab manages the Diaries (Дневник) tab.
 //
-// In edonish.tj, there is NO separate "/diaries" API endpoint.
-// Instead, diary data comes from /journal/students — each student has
+// In edonish.tj, diary data comes from /journal/students — each student has
 // marks and comments per date. Teachers write comments using
 // POST /journal/comment with the student's group_subgroup_student_id.
 //
@@ -172,6 +171,8 @@ func (dt *DiariesTab) onClassSelected(selected string) {
 	dt.selectedGroup = group
 	dt.selectedSubject = nil
 	dt.selectedQuarter = nil
+	dt.students = nil
+	dt.dates = nil
 
 	subjectNames := make([]string, len(group.Subjects))
 	for i, s := range group.Subjects {
@@ -192,9 +193,11 @@ func (dt *DiariesTab) onClassSelected(selected string) {
 		dt.quarterSel.Refresh()
 		dt.quarterSel.ClearSelected()
 
+		// Auto select first subject
 		if len(subjectNames) > 0 {
 			dt.subjectSel.SetSelectedIndex(0)
 		}
+		// Auto select current quarter
 		for i, q := range group.Quarters {
 			if q.CurrentQuarter {
 				dt.quarterSel.SetSelectedIndex(i)
@@ -265,34 +268,41 @@ func (dt *DiariesTab) loadData() {
 		}
 		if errD != nil {
 			dt.statusLabel.SetText(fmt.Sprintf("Ошибка загрузки дат: %v", errD))
+			dialog.ShowError(fmt.Errorf("Ошибка загрузки дат: %v", errD), dt.controller.GetWindow())
 			return
 		}
 
 		dt.students = students
 		dt.dates = dates
-		dt.rebuildStudentsList()
 
-		dt.statusLabel.SetText(fmt.Sprintf("Загружено: %d учеников, %d дат", len(students), len(dates)))
+		if len(students) == 0 {
+			dt.statusLabel.SetText("Нет учеников для выбранных фильтров")
+		} else {
+			dt.statusLabel.SetText(fmt.Sprintf("Загружено: %d учеников, %d дат", len(students), len(dates)))
+		}
+
+		dt.rebuildStudentsList()
 	})
 }
 
 // rebuildStudentsList builds the list of students with their diary status.
 func (dt *DiariesTab) rebuildStudentsList() {
+	// Build top bar components
+	filterRow := container.NewHBox(
+		widget.NewLabel("Фильтры:"), dt.classSel, dt.subjectSel, dt.quarterSel,
+	)
+	actionRow := container.NewHBox(
+		widget.NewButton("Подписать: Похвала", func() { dt.onBatchSignWithCategory(BehaviorPraise) }),
+		widget.NewButton("Подписать: Смешанный", func() { dt.onBatchSignWithCategory(BehaviorMixed) }),
+		widget.NewButton("Подписать: Жалоба", func() { dt.onBatchSignWithCategory(BehaviorComplaint) }),
+		widget.NewButtonWithIcon("Обновить", theme.ViewRefreshIcon(), func() { go dt.loadData() }),
+	)
+	topBar := container.NewVBox(filterRow, actionRow, widget.NewSeparator())
+
 	if len(dt.students) == 0 {
 		dt.container.Objects = []fyne.CanvasObject{
 			container.NewBorder(
-				container.NewVBox(
-					container.NewHBox(
-						widget.NewLabel("Фильтры:"), dt.classSel, dt.subjectSel, dt.quarterSel,
-					),
-					container.NewHBox(
-						widget.NewButton("Подписать: Похвала", func() { dt.onBatchSignWithCategory(BehaviorPraise) }),
-						widget.NewButton("Подписать: Смешанный", func() { dt.onBatchSignWithCategory(BehaviorMixed) }),
-						widget.NewButton("Подписать: Жалоба", func() { dt.onBatchSignWithCategory(BehaviorComplaint) }),
-						widget.NewButtonWithIcon("Обновить", theme.ViewRefreshIcon(), func() { go dt.loadData() }),
-					),
-					widget.NewSeparator(),
-				),
+				topBar,
 				dt.statusLabel,
 				nil, nil,
 				widget.NewLabelWithStyle("Нет учеников для выбранных фильтров", fyne.TextAlignCenter, fyne.TextStyle{Italic: true}),
@@ -305,15 +315,21 @@ func (dt *DiariesTab) rebuildStudentsList() {
 	dt.studentsList = widget.NewList(
 		func() int { return len(dt.students) },
 		func() fyne.CanvasObject {
+			numLabel := widget.NewLabel("")
+			numLabel.TextStyle = fyne.TextStyle{Bold: true}
+
 			nameLabel := widget.NewLabel("")
 			nameLabel.TextStyle = fyne.TextStyle{Bold: true}
 
 			avgLabel := widget.NewLabel("")
 
-			commentsLabel := widget.NewLabel("")
-			commentsLabel.Wrapping = fyne.TextWrapWord
+			marksLabel := widget.NewLabel("")
 
-			return container.NewVBox(nameLabel, avgLabel, commentsLabel)
+			return container.NewBorder(nil, nil,
+				container.NewHBox(numLabel, nameLabel),
+				nil,
+				container.NewVBox(avgLabel, marksLabel),
+			)
 		},
 		func(id widget.ListItemID, cell fyne.CanvasObject) {
 			if id < 0 || id >= len(dt.students) {
@@ -321,27 +337,38 @@ func (dt *DiariesTab) rebuildStudentsList() {
 			}
 			student := dt.students[id]
 
-			vbox := cell.(*fyne.Container)
-			nameLabel := vbox.Objects[0].(*widget.Label)
-			avgLabel := vbox.Objects[1].(*widget.Label)
-			commentsLabel := vbox.Objects[2].(*widget.Label)
+			border := cell.(*fyne.Container)
+			leftBox := border.Objects[0].(*fyne.Container)
+			rightBox := border.Objects[1].(*fyne.Container)
 
+			numLabel := leftBox.Objects[0].(*widget.Label)
+			nameLabel := leftBox.Objects[1].(*widget.Label)
+
+			avgLabel := rightBox.Objects[0].(*widget.Label)
+			marksLabel := rightBox.Objects[1].(*widget.Label)
+
+			numLabel.SetText(fmt.Sprintf("%d.", id+1))
 			nameLabel.SetText(fmt.Sprintf("%s %s", student.LastName, student.FirstName))
 
-			if student.AverageScore != "" {
-				avgLabel.SetText(fmt.Sprintf("Средний балл: %s", student.AverageScore))
+			if student.AverageScore != "" && student.AverageScore != "0.0" {
+				avgLabel.SetText(fmt.Sprintf("Ср. балл: %s", student.AverageScore))
 			} else {
 				avgLabel.SetText("")
 			}
 
-			// Show count of marks
+			// Count marks
 			markCount := 0
 			for _, sm := range student.SubjectMarks {
 				if sm.ShortName != "" && sm.ShortName != "—" {
 					markCount++
 				}
 			}
-			commentsLabel.SetText(fmt.Sprintf("Оценок: %d из %d дат", markCount, len(dt.dates)))
+			marksLabel.SetText(fmt.Sprintf("Оценок: %d / Дат: %d", markCount, len(dt.dates)))
+
+			numLabel.Refresh()
+			nameLabel.Refresh()
+			avgLabel.Refresh()
+			marksLabel.Refresh()
 		},
 	)
 
@@ -352,18 +379,7 @@ func (dt *DiariesTab) rebuildStudentsList() {
 
 	dt.container.Objects = []fyne.CanvasObject{
 		container.NewBorder(
-			container.NewVBox(
-				container.NewHBox(
-					widget.NewLabel("Фильтры:"), dt.classSel, dt.subjectSel, dt.quarterSel,
-				),
-				container.NewHBox(
-					widget.NewButton("Подписать: Похвала", func() { dt.onBatchSignWithCategory(BehaviorPraise) }),
-					widget.NewButton("Подписать: Смешанный", func() { dt.onBatchSignWithCategory(BehaviorMixed) }),
-					widget.NewButton("Подписать: Жалоба", func() { dt.onBatchSignWithCategory(BehaviorComplaint) }),
-					widget.NewButtonWithIcon("Обновить", theme.ViewRefreshIcon(), func() { go dt.loadData() }),
-				),
-				widget.NewSeparator(),
-			),
+			topBar,
 			dt.statusLabel,
 			nil, nil,
 			dt.studentsList,
@@ -388,7 +404,7 @@ func (dt *DiariesTab) showStudentDiaryDialog(idx int) {
 
 	// Average score
 	avgText := "Средний балл: "
-	if student.AverageScore != "" {
+	if student.AverageScore != "" && student.AverageScore != "0.0" {
 		avgText += student.AverageScore
 	} else {
 		avgText += "—"
@@ -479,7 +495,7 @@ func (dt *DiariesTab) showStudentDiaryDialog(idx int) {
 }
 
 // writeCommentForStudent writes a diary comment for a student using /journal/comment API.
-// It writes the same comment on all dates in the selected quarter.
+// It writes the same comment on the first available date in the selected quarter.
 func (dt *DiariesTab) writeCommentForStudent(studentID int, comment string, idx int) {
 	if dt.selectedQuarter == nil || len(dt.dates) == 0 {
 		fyne.Do(func() {
@@ -522,7 +538,7 @@ func (dt *DiariesTab) writeCommentForStudent(studentID int, comment string, idx 
 // onBatchSignWithCategory writes behavior comments for all students in the selected quarter.
 func (dt *DiariesTab) onBatchSignWithCategory(category BehaviorCategory) {
 	if len(dt.students) == 0 {
-		dialog.ShowInformation("Внимание", "Нет учеников для подписания", dt.controller.GetWindow())
+		dialog.ShowInformation("Внимание", "Нет учеников для подписания.\nВыберите класс, предмет и четверть.", dt.controller.GetWindow())
 		return
 	}
 	if dt.selectedQuarter == nil || len(dt.dates) == 0 {

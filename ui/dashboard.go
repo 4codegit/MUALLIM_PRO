@@ -120,7 +120,7 @@ func (d *Dashboard) buildHeader() *fyne.Container {
         }
 
         // App title on the left
-        appTitle := canvas.NewText("eDonish Auto v4.2", color.NRGBA{R: 255, G: 255, B: 255, A: 255})
+        appTitle := canvas.NewText("eDonish Auto v4.6", color.NRGBA{R: 255, G: 255, B: 255, A: 255})
         appTitle.TextStyle = fyne.TextStyle{Bold: true}
         appTitle.TextSize = 18
 

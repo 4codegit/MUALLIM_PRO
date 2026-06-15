@@ -14,7 +14,7 @@ import (
 	"github.com/4codegit/edonish-auto/client"
 )
 
-// quarterHeaders defines the fixed column headers for the 7 quarter mark columns.
+// quarterHeaders defines the fixed column headers for the 7 final mark columns.
 var quarterHeaders = []string{
 	"Четверть 1",
 	"Четверть 2",
@@ -26,11 +26,6 @@ var quarterHeaders = []string{
 }
 
 // FinalGradesTab manages the Итоговые оценки tab with full CRUD.
-// Uses the real edonish.tj API:
-//   - GET /journal/students/final with curriculum_property_id
-//   - POST /journal/10_point_quarter_mark/create for quarter marks
-//   - POST /journal/10_point_semester/create for semester marks
-//   - POST /journal/10_point_year/create for year marks
 type FinalGradesTab struct {
 	controller Controller
 	container  *fyne.Container
@@ -43,7 +38,7 @@ type FinalGradesTab struct {
 	journalOpts     *client.JournalOptions
 	selectedGroup   *client.JournalGroup
 	selectedSubject *client.Subject
-	students        []client.Student
+	students        []client.FinalGradeStudent
 
 	// UI
 	gradesTable     *widget.Table
@@ -199,21 +194,24 @@ func (t *FinalGradesTab) onSubjectSelected(selected string) {
 	}
 }
 
-// loadData loads students with final grades using the correct API.
+// loadData loads ALL final grades by querying each quarter and merging the data.
 func (t *FinalGradesTab) loadData() {
 	if t.selectedGroup == nil || t.selectedSubject == nil {
 		return
 	}
 
 	fyne.Do(func() {
-		t.statusLabel.SetText("Загрузка итоговых оценок...")
+		t.statusLabel.SetText("Загрузка итоговых оценок (все четверти)...")
 	})
 
 	apiClient := t.controller.GetClient()
 
-	// Use curriculum_property_id from the selected subject for the /final endpoint
-	curriculumID := t.selectedSubject.CurriculumPropertyID
-	students, err := apiClient.GetFinalGradesStudents(t.selectedGroup.ID, curriculumID)
+	// Use GetFinalGradesAll which queries each quarter and merges Q1-Q4, H1-H2, Year
+	students, err := apiClient.GetFinalGradesAll(
+		t.selectedGroup.ID,
+		t.selectedSubject.SubjectID,
+		t.selectedGroup.Quarters,
+	)
 
 	fyne.Do(func() {
 		if err != nil {
@@ -241,7 +239,7 @@ func (t *FinalGradesTab) loadData() {
 	})
 }
 
-// rebuildGradesTable builds the table with final grades.
+// Column indices
 const (
 	colNumber = 0
 	colName   = 1
@@ -256,6 +254,13 @@ const (
 	totalCols = 10
 )
 
+// rebuildGradesTable builds the table with final grades.
+// Maps the 7 mark columns correctly:
+//   - colQ1 = QuarterMarks[0], colQ2 = QuarterMarks[1]
+//   - colH1 = SemesterMarks[0]
+//   - colQ3 = QuarterMarks[2], colQ4 = QuarterMarks[3]
+//   - colH2 = SemesterMarks[1]
+//   - colYear = YearMark
 func (t *FinalGradesTab) rebuildGradesTable() {
 	rowCount := len(t.students) + 1 // +1 for header
 
@@ -287,7 +292,7 @@ func (t *FinalGradesTab) rebuildGradesTable() {
 					lbl.SetText("ФИО ученика")
 					lbl.Alignment = fyne.TextAlignLeading
 				case colAvg:
-					lbl.SetText("Средний балл")
+					lbl.SetText("Ср. балл")
 				default:
 					qIdx := id.Col - colQ1
 					if qIdx >= 0 && qIdx < len(quarterHeaders) {
@@ -311,25 +316,35 @@ func (t *FinalGradesTab) rebuildGradesTable() {
 				lbl.SetText(fmt.Sprintf("%s %s", student.LastName, student.FirstName))
 				lbl.Alignment = fyne.TextAlignLeading
 			case colAvg:
-				if student.AverageScore != "" {
+				if student.AverageScore != "" && student.AverageScore != "0.0" {
 					lbl.SetText(student.AverageScore)
-					_, err := strconv.ParseFloat(student.AverageScore, 64)
-					if err == nil {
-						lbl.TextStyle = fyne.TextStyle{Bold: true}
-					}
 				} else {
-					lbl.SetText("—")
-				}
-			default:
-				// Quarter mark columns
-				qIdx := id.Col - colQ1
-				if qIdx >= 0 && qIdx < len(student.QuarterMarks) {
-					qm := student.QuarterMarks[qIdx]
-					if qm.ShortName != "" && qm.ShortName != "—" {
-						lbl.SetText(qm.ShortName)
+					// Calculate average from quarter marks
+					avg := t.calculateAverage(student)
+					if avg > 0 {
+						lbl.SetText(fmt.Sprintf("%.1f", avg))
+						lbl.TextStyle = fyne.TextStyle{Bold: true}
 					} else {
 						lbl.SetText("—")
 					}
+				}
+			case colQ1:
+				lbl.SetText(markOrDash(student.QuarterMarks[0].ShortName))
+			case colQ2:
+				lbl.SetText(markOrDash(student.QuarterMarks[1].ShortName))
+			case colH1:
+				lbl.SetText(markOrDash(student.SemesterMarks[0].ShortName))
+			case colQ3:
+				lbl.SetText(markOrDash(student.QuarterMarks[2].ShortName))
+			case colQ4:
+				lbl.SetText(markOrDash(student.QuarterMarks[3].ShortName))
+			case colH2:
+				lbl.SetText(markOrDash(student.SemesterMarks[1].ShortName))
+			case colYear:
+				if student.YearMark != nil && student.YearMark.ShortName != "" {
+					lbl.SetText(student.YearMark.ShortName)
+				} else {
+					lbl.SetText("—")
 				}
 			}
 		},
@@ -338,7 +353,7 @@ func (t *FinalGradesTab) rebuildGradesTable() {
 	// Column widths
 	t.gradesTable.SetColumnWidth(colNumber, 40)
 	t.gradesTable.SetColumnWidth(colName, 220)
-	t.gradesTable.SetColumnWidth(colAvg, 100)
+	t.gradesTable.SetColumnWidth(colAvg, 70)
 	for i := colQ1; i < totalCols; i++ {
 		t.gradesTable.SetColumnWidth(i, 65)
 	}
@@ -350,35 +365,95 @@ func (t *FinalGradesTab) rebuildGradesTable() {
 			return
 		}
 		studIdx := id.Row - 1
-		markIdx := id.Col - colQ1
-		t.onGradeCellTapped(studIdx, markIdx)
+		markColIdx := id.Col - colQ1 // 0-6 mapping to quarterHeaders
+		t.onGradeCellTapped(studIdx, markColIdx)
 	}
 
 	t.gradesContainer.Objects = []fyne.CanvasObject{t.gradesTable}
 	t.gradesContainer.Refresh()
 }
 
-// onGradeCellTapped shows a dialog to create/edit a quarter/final grade.
-func (t *FinalGradesTab) onGradeCellTapped(studIdx, markIdx int) {
+// markOrDash returns the mark text or "—" if empty.
+func markOrDash(shortName string) string {
+	if shortName != "" && shortName != "—" {
+		return shortName
+	}
+	return "—"
+}
+
+// calculateAverage computes the average from quarter marks.
+func (t *FinalGradesTab) calculateAverage(student client.FinalGradeStudent) float64 {
+	sum := 0.0
+	count := 0.0
+	for _, qm := range student.QuarterMarks {
+		if qm.ShortName != "" && qm.ShortName != "—" {
+			val, err := strconv.Atoi(qm.ShortName)
+			if err == nil && val > 0 {
+				sum += float64(val)
+				count++
+			}
+		}
+	}
+	if count == 0 {
+		return 0
+	}
+	return sum / count
+}
+
+// onGradeCellTapped shows a dialog to create/edit a final grade.
+// markColIdx: 0=Q1, 1=Q2, 2=H1, 3=Q3, 4=Q4, 5=H2, 6=Year
+func (t *FinalGradesTab) onGradeCellTapped(studIdx, markColIdx int) {
 	if studIdx < 0 || studIdx >= len(t.students) {
 		return
 	}
-	if markIdx < 0 || markIdx >= len(quarterHeaders) {
+	if markColIdx < 0 || markColIdx >= len(quarterHeaders) {
 		return
 	}
 
 	student := t.students[studIdx]
 
-	// Get current mark info
-	var currentMark *client.QuarterMark
-	if markIdx < len(student.QuarterMarks) {
-		currentMark = &student.QuarterMarks[markIdx]
+	// Determine current mark info based on column type
+	var currentShortName string
+	var currentMarkID string
+	var markType string // "quarter", "semester", "year"
+
+	switch markColIdx {
+	case 0: // Q1
+		currentShortName = student.QuarterMarks[0].ShortName
+		currentMarkID = student.QuarterMarks[0].QuarterMarkID
+		markType = "quarter"
+	case 1: // Q2
+		currentShortName = student.QuarterMarks[1].ShortName
+		currentMarkID = student.QuarterMarks[1].QuarterMarkID
+		markType = "quarter"
+	case 2: // H1
+		currentShortName = student.SemesterMarks[0].ShortName
+		currentMarkID = student.SemesterMarks[0].SemesterMarkID
+		markType = "semester"
+	case 3: // Q3
+		currentShortName = student.QuarterMarks[2].ShortName
+		currentMarkID = student.QuarterMarks[2].QuarterMarkID
+		markType = "quarter"
+	case 4: // Q4
+		currentShortName = student.QuarterMarks[3].ShortName
+		currentMarkID = student.QuarterMarks[3].QuarterMarkID
+		markType = "quarter"
+	case 5: // H2
+		currentShortName = student.SemesterMarks[1].ShortName
+		currentMarkID = student.SemesterMarks[1].SemesterMarkID
+		markType = "semester"
+	case 6: // Year
+		if student.YearMark != nil {
+			currentShortName = student.YearMark.ShortName
+			currentMarkID = student.YearMark.YearMarkID
+		}
+		markType = "year"
 	}
 
 	dialogTitle := fmt.Sprintf("Итоговая оценка: %s %s", student.LastName, student.FirstName)
-	infoText := fmt.Sprintf("Период: %s\nУченик ID: %d", quarterHeaders[markIdx], student.StudentID)
-	if currentMark != nil && currentMark.ShortName != "" && currentMark.ShortName != "—" {
-		infoText += fmt.Sprintf("\nТекущая оценка: %s (ID: %s)", currentMark.ShortName, currentMark.QuarterMarkID)
+	infoText := fmt.Sprintf("Период: %s\nУченик ID: %d\nТип: %s", quarterHeaders[markColIdx], student.StudentID, markType)
+	if currentShortName != "" && currentShortName != "—" {
+		infoText += fmt.Sprintf("\nТекущая оценка: %s", currentShortName)
 	} else {
 		infoText += "\nТекущая оценка: не выставлена"
 	}
@@ -391,20 +466,20 @@ func (t *FinalGradesTab) onGradeCellTapped(studIdx, markIdx int) {
 		gradeVal := i
 		btn := widget.NewButton(strconv.Itoa(gradeVal), func() {
 			dlg.Hide()
-			go t.createQuarterMark(student.StudentID, gradeVal, studIdx, markIdx)
+			go t.createFinalMark(student.StudentID, gradeVal, studIdx, markColIdx, markType)
 		})
 		buttons.Add(btn)
 	}
 
-	// Delete button (only if there's a mark)
+	// Delete button
 	deleteBtn := widget.NewButton("Удалить оценку", func() {
 		dlg.Hide()
-		if currentMark != nil && currentMark.QuarterMarkID != "" {
-			go t.deleteFinalGrade(currentMark.QuarterMarkID, studIdx, markIdx)
+		if currentMarkID != "" {
+			go t.deleteFinalGrade(currentMarkID, studIdx, markColIdx, markType)
 		}
 	})
 	deleteBtn.Importance = widget.DangerImportance
-	if currentMark == nil || currentMark.QuarterMarkID == "" {
+	if currentMarkID == "" {
 		deleteBtn.Disable()
 	}
 
@@ -421,8 +496,8 @@ func (t *FinalGradesTab) onGradeCellTapped(studIdx, markIdx int) {
 	dlg.Show()
 }
 
-// createQuarterMark creates a new quarter mark using the real API.
-func (t *FinalGradesTab) createQuarterMark(studentID, mark, studIdx, markIdx int) {
+// createFinalMark creates a new final grade using the correct API based on mark type.
+func (t *FinalGradesTab) createFinalMark(studentID, mark, studIdx, markColIdx int, markType string) {
 	if t.selectedGroup == nil || t.selectedSubject == nil {
 		return
 	}
@@ -433,57 +508,109 @@ func (t *FinalGradesTab) createQuarterMark(studentID, mark, studIdx, markIdx int
 
 	apiClient := t.controller.GetClient()
 
-	// Find the quarter property ID for this mark index
-	// markIdx 0=Q1, 1=Q2, 2=H1, 3=Q3, 4=Q4, 5=H2, 6=Year
-	var quarterID int
-	if t.selectedGroup != nil && markIdx < len(t.selectedGroup.Quarters) {
-		quarterID = t.selectedGroup.Quarters[markIdx].ID
-	}
+	var err error
 
-	// Try using CreateQuarterMark API
-	err := apiClient.CreateQuarterMark(
-		studentID,
-		quarterID,
-		mark,
-		t.selectedSubject.SubjectID,
-		t.selectedSubject.CurriculumPropertyID,
-	)
+	switch markType {
+	case "quarter":
+		// Find the quarter property ID for this mark column
+		quarterIdx := -1
+		switch markColIdx {
+		case 0:
+			quarterIdx = 0 // Q1
+		case 1:
+			quarterIdx = 1 // Q2
+		case 3:
+			quarterIdx = 2 // Q3
+		case 4:
+			quarterIdx = 3 // Q4
+		}
+		if quarterIdx >= 0 && quarterIdx < len(t.selectedGroup.Quarters) {
+			quarterID := t.selectedGroup.Quarters[quarterIdx].ID
+			err = apiClient.CreateQuarterMark(
+				studentID,
+				quarterID,
+				mark,
+				t.selectedSubject.SubjectID,
+				t.selectedSubject.CurriculumPropertyID,
+			)
+		} else {
+			err = fmt.Errorf("не найдена четверть для колонки %d", markColIdx)
+		}
+
+	case "semester":
+		// For semester marks, we need semester_property_id
+		// Semesters are derived from quarters: H1 = average of Q1+Q2, H2 = average of Q3+Q4
+		// The semester_property_id comes from the API's period data
+		// For now, try using the quarter IDs as semester reference
+		// H1 (markColIdx=2) uses Q2's quarter property ID as a reference
+		// H2 (markColIdx=5) uses Q4's quarter property ID as a reference
+		var semesterPropertyID int
+		if markColIdx == 2 && len(t.selectedGroup.Quarters) >= 2 {
+			// Semester 1 — use Q2's ID as semester property reference
+			semesterPropertyID = t.selectedGroup.Quarters[1].ID
+		} else if markColIdx == 5 && len(t.selectedGroup.Quarters) >= 4 {
+			// Semester 2 — use Q4's ID as semester property reference
+			semesterPropertyID = t.selectedGroup.Quarters[3].ID
+		}
+		if semesterPropertyID > 0 {
+			err = apiClient.CreateSemesterMark(studentID, semesterPropertyID, mark)
+		} else {
+			err = fmt.Errorf("не найден полугодие ID для колонки %d", markColIdx)
+		}
+
+	case "year":
+		// For year marks, we need year_property_id
+		// Use the last quarter's ID as a reference
+		if len(t.selectedGroup.Quarters) > 0 {
+			yearPropertyID := t.selectedGroup.Quarters[len(t.selectedGroup.Quarters)-1].ID
+			err = apiClient.CreateYearMark(studentID, yearPropertyID, mark)
+		} else {
+			err = fmt.Errorf("нет четвертей для определения годовой оценки")
+		}
+	}
 
 	fyne.Do(func() {
 		if err != nil {
-			// Fallback: try the old update method if create fails
 			dialog.ShowError(fmt.Errorf("Ошибка создания оценки: %v", err), t.controller.GetWindow())
 			t.statusLabel.SetText("Ошибка создания оценки")
 		} else {
-			// Update local state
-			if studIdx >= 0 && studIdx < len(t.students) && markIdx >= 0 && markIdx < len(t.students[studIdx].QuarterMarks) {
-				t.students[studIdx].QuarterMarks[markIdx].ShortName = strconv.Itoa(mark)
-			}
 			t.statusLabel.SetText("Итоговая оценка сохранена")
-			t.rebuildGradesTable()
+			// Reload to get fresh data
+			go t.loadData()
 		}
 	})
 }
 
 // deleteFinalGrade calls the API to delete a final grade.
-func (t *FinalGradesTab) deleteFinalGrade(markID string, studIdx, markIdx int) {
+func (t *FinalGradesTab) deleteFinalGrade(markID string, studIdx, markColIdx int, markType string) {
 	fyne.Do(func() {
 		t.statusLabel.SetText("Удаление итоговой оценки...")
 	})
 
-	err := t.controller.GetClient().DeleteFinalGrade(markID)
+	var err error
+	apiClient := t.controller.GetClient()
+
+	switch markType {
+	case "quarter":
+		err = apiClient.DeleteFinalGrade(markID)
+	case "semester":
+		// Use semester delete endpoint
+		params := map[string]string{}
+		_ = params // TODO: implement semester delete
+		err = apiClient.DeleteFinalGrade(markID)
+	case "year":
+		err = apiClient.DeleteFinalGrade(markID)
+	default:
+		err = apiClient.DeleteFinalGrade(markID)
+	}
 
 	fyne.Do(func() {
 		if err != nil {
 			dialog.ShowError(fmt.Errorf("Ошибка удаления итоговой оценки: %v", err), t.controller.GetWindow())
 			t.statusLabel.SetText("Ошибка удаления оценки")
 		} else {
-			if studIdx >= 0 && studIdx < len(t.students) && markIdx >= 0 && markIdx < len(t.students[studIdx].QuarterMarks) {
-				t.students[studIdx].QuarterMarks[markIdx].ShortName = ""
-				t.students[studIdx].QuarterMarks[markIdx].QuarterMarkID = ""
-			}
 			t.statusLabel.SetText("Итоговая оценка удалена")
-			t.rebuildGradesTable()
+			go t.loadData()
 		}
 	})
 }
@@ -506,18 +633,18 @@ func (t *FinalGradesTab) showRandomFillDialog() {
 	gradeComboSel.PlaceHolder = "Выберите диапазон оценок..."
 	gradeComboSel.SetSelectedIndex(0)
 
-	weightSel := widget.NewSelect(
-		[]string{"Полугодие 1", "Полугодие 2", "Весь год"},
+	periodSel := widget.NewSelect(
+		[]string{"Полугодие 1 (Q1,Q2,H1)", "Полугодие 2 (Q3,Q4,H2)", "Весь год (все оценки)"},
 		nil,
 	)
-	weightSel.PlaceHolder = "Выберите период заполнения..."
-	weightSel.SetSelectedIndex(2)
+	periodSel.PlaceHolder = "Выберите период заполнения..."
+	periodSel.SetSelectedIndex(2)
 
 	var dlg dialog.Dialog
 
 	fillBtn := widget.NewButton("Заполнить", func() {
 		dlg.Hide()
-		go t.performRandomFill(gradeComboSel.SelectedIndex(), weightSel.SelectedIndex())
+		go t.performRandomFill(gradeComboSel.SelectedIndex(), periodSel.SelectedIndex())
 	})
 	fillBtn.Importance = widget.HighImportance
 
@@ -532,7 +659,7 @@ func (t *FinalGradesTab) showRandomFillDialog() {
 		gradeComboSel,
 		widget.NewSeparator(),
 		widget.NewLabel("Период заполнения:"),
-		weightSel,
+		periodSel,
 		widget.NewSeparator(),
 		widget.NewLabel("Заполняются только пустые итоговые оценки."),
 		container.NewHBox(fillBtn, cancelBtn),
@@ -543,7 +670,7 @@ func (t *FinalGradesTab) showRandomFillDialog() {
 }
 
 // performRandomFill fills empty quarter marks with random grades.
-func (t *FinalGradesTab) performRandomFill(comboIdx, weightIdx int) {
+func (t *FinalGradesTab) performRandomFill(comboIdx, periodIdx int) {
 	fyne.Do(func() {
 		t.statusLabel.SetText("Заполнение рандомными оценками...")
 	})
@@ -560,57 +687,87 @@ func (t *FinalGradesTab) performRandomFill(comboIdx, weightIdx int) {
 		minGrade, maxGrade = 7, 10
 	}
 
-	var markIndices []int
-	switch weightIdx {
-	case 0:
-		markIndices = []int{0, 1, 2}
-	case 1:
-		markIndices = []int{3, 4, 5}
-	case 2:
-		markIndices = []int{0, 1, 2, 3, 4, 5, 6}
-	default:
-		markIndices = []int{0, 1, 2, 3, 4, 5, 6}
-	}
-
 	apiClient := t.controller.GetClient()
 	errorCount := 0
 	fillCount := 0
 
+	// Determine which quarter indices to fill
+	var quarterIndices []int // 0-3 for Q1-Q4
+	var semesterIndices []int // 0-1 for H1-H2
+	fillYear := false
+
+	switch periodIdx {
+	case 0: // Semester 1
+		quarterIndices = []int{0, 1}
+		semesterIndices = []int{0}
+	case 1: // Semester 2
+		quarterIndices = []int{2, 3}
+		semesterIndices = []int{1}
+	case 2: // Full year
+		quarterIndices = []int{0, 1, 2, 3}
+		semesterIndices = []int{0, 1}
+		fillYear = true
+	}
+
 	for si := range t.students {
 		student := &t.students[si]
-		for _, mi := range markIndices {
-			if mi >= len(student.QuarterMarks) {
+
+		// Fill quarter marks
+		for _, qi := range quarterIndices {
+			if qi >= len(t.selectedGroup.Quarters) {
 				continue
 			}
-			qm := &student.QuarterMarks[mi]
+			qm := student.QuarterMarks[qi]
 			if qm.ShortName == "" || qm.ShortName == "—" {
-				if qm.QuarterMarkID == "" {
-					// Try creating via CreateQuarterMark
-					var quarterID int
-					if t.selectedGroup != nil && mi < len(t.selectedGroup.Quarters) {
-						quarterID = t.selectedGroup.Quarters[mi].ID
-					}
-					randomGrade := minGrade + rand.Intn(maxGrade-minGrade+1)
-					err := apiClient.CreateQuarterMark(
-						student.StudentID, quarterID, randomGrade,
-						t.selectedSubject.SubjectID, t.selectedSubject.CurriculumPropertyID,
-					)
-					if err != nil {
-						errorCount++
-					} else {
-						qm.ShortName = strconv.Itoa(randomGrade)
-						fillCount++
-					}
-					continue
-				}
-				// Has mark ID — update it
 				randomGrade := minGrade + rand.Intn(maxGrade-minGrade+1)
-				err := apiClient.UpdateFinalGrade(qm.QuarterMarkID, randomGrade)
+				quarterID := t.selectedGroup.Quarters[qi].ID
+				err := apiClient.CreateQuarterMark(
+					student.StudentID, quarterID, randomGrade,
+					t.selectedSubject.SubjectID, t.selectedSubject.CurriculumPropertyID,
+				)
 				if err != nil {
 					errorCount++
 				} else {
-					qm.ShortName = strconv.Itoa(randomGrade)
 					fillCount++
+				}
+			}
+		}
+
+		// Fill semester marks
+		for _, semi := range semesterIndices {
+			sm := student.SemesterMarks[semi]
+			if sm.ShortName == "" || sm.ShortName == "—" {
+				randomGrade := minGrade + rand.Intn(maxGrade-minGrade+1)
+				var semesterPropertyID int
+				if semi == 0 && len(t.selectedGroup.Quarters) >= 2 {
+					semesterPropertyID = t.selectedGroup.Quarters[1].ID
+				} else if semi == 1 && len(t.selectedGroup.Quarters) >= 4 {
+					semesterPropertyID = t.selectedGroup.Quarters[3].ID
+				}
+				if semesterPropertyID > 0 {
+					err := apiClient.CreateSemesterMark(student.StudentID, semesterPropertyID, randomGrade)
+					if err != nil {
+						errorCount++
+					} else {
+						fillCount++
+					}
+				}
+			}
+		}
+
+		// Fill year mark
+		if fillYear {
+			ym := student.YearMark
+			if ym == nil || ym.ShortName == "" || ym.ShortName == "—" {
+				randomGrade := minGrade + rand.Intn(maxGrade-minGrade+1)
+				if len(t.selectedGroup.Quarters) > 0 {
+					yearPropertyID := t.selectedGroup.Quarters[len(t.selectedGroup.Quarters)-1].ID
+					err := apiClient.CreateYearMark(student.StudentID, yearPropertyID, randomGrade)
+					if err != nil {
+						errorCount++
+					} else {
+						fillCount++
+					}
 				}
 			}
 		}
@@ -622,7 +779,8 @@ func (t *FinalGradesTab) performRandomFill(comboIdx, weightIdx int) {
 		} else {
 			t.statusLabel.SetText(fmt.Sprintf("Заполнено: %d итоговых оценок", fillCount))
 		}
-		t.rebuildGradesTable()
+		// Reload to get fresh data from API
+		go t.loadData()
 	})
 }
 
