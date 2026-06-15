@@ -38,10 +38,12 @@ type Dashboard struct {
         statusLabel *widget.Label
 
         // Navigation state
-        homePage     *fyne.Container
         contentStack *fyne.Container
         currentPage  fyne.CanvasObject
         navStack     []fyne.CanvasObject
+
+        // Bottom tab bar
+        tabBar *fyne.Container
 
         // Filters state
         classSel   *widget.Select
@@ -60,6 +62,10 @@ type Dashboard struct {
         // Tab content objects
         gradesTable     *widget.Table
         gradesContainer *fyne.Container
+
+        // Journal selection state
+        selectedCell *widget.TableCellID
+        deleteBtn    *widget.Button
 
         // Tab objects
         topicsTab      *TopicsTab
@@ -97,15 +103,19 @@ func (d *Dashboard) buildUI() {
         d.diariesTab = NewDiariesTab(d.controller)
         d.finalGradesTab = NewFinalGradesTab(d.controller)
 
-        d.homePage = d.buildHomePage()
-        d.currentPage = d.homePage
-        d.contentStack = container.NewStack(d.homePage)
+        // Start on journal page
+        d.currentPage = d.gradesContainer
+
+        // Build bottom tab bar
+        d.tabBar = d.buildTabBar()
 
         topSection := container.NewVBox(header, filters, widget.NewSeparator())
 
+        d.contentStack = container.NewStack(d.currentPage)
+
         d.container = container.NewBorder(
                 topSection,
-                d.statusLabel,
+                container.NewVBox(widget.NewSeparator(), d.tabBar),
                 nil,
                 nil,
                 d.contentStack,
@@ -137,7 +147,7 @@ func (d *Dashboard) buildHeader() *fyne.Container {
         appTitle.TextStyle = fyne.TextStyle{Bold: true}
         appTitle.TextSize = 18
 
-        versionTag := canvas.NewText("v5.0", colorAccent)
+        versionTag := canvas.NewText("v5.2", colorAccent)
         versionTag.TextSize = 11
         versionTag.TextStyle = fyne.TextStyle{Bold: true}
 
@@ -181,144 +191,62 @@ func (d *Dashboard) buildFilters() *fyne.Container {
         })
         d.refreshBtn.Disable()
 
+        d.deleteBtn = widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
+                d.deleteSelectedCell()
+        })
+        d.deleteBtn.Importance = widget.DangerImportance
+        d.deleteBtn.Disable()
+
         return container.NewHBox(
                 widget.NewLabel("Фильтры:"),
                 d.classSel,
                 d.subjectSel,
                 d.quarterSel,
                 d.refreshBtn,
+                d.deleteBtn,
         )
 }
 
 // ------------------------------------------
-// HOME PAGE — 4 modern cards
+// BOTTOM TAB BAR — instant section switching
 // ------------------------------------------
 
-func (d *Dashboard) buildHomePage() *fyne.Container {
-        welcomeText := canvas.NewText("eDonish Auto", colorNavBG)
-        welcomeText.TextStyle = fyne.TextStyle{Bold: true}
-        welcomeText.TextSize = 24
-        welcomeText.Alignment = fyne.TextAlignCenter
+func (d *Dashboard) buildTabBar() *fyne.Container {
+        journalBtn := widget.NewButton("Журнал", func() {
+                d.switchTab(d.gradesContainer)
+        })
+        journalBtn.Importance = widget.HighImportance
 
-        subtitleText := canvas.NewText("Выберите раздел для работы", color.NRGBA{R: 100, G: 116, B: 139, A: 255})
-        subtitleText.TextSize = 13
-        subtitleText.Alignment = fyne.TextAlignCenter
+        topicsBtn := widget.NewButton("Темы и ДЗ", func() {
+                d.switchTab(d.topicsTab.Container())
+        })
 
-        headerSection := container.NewVBox(
-                container.NewCenter(welcomeText),
-                container.NewCenter(subtitleText),
-                widget.NewSeparator(),
+        diaryBtn := widget.NewButton("Дневник", func() {
+                d.switchTab(d.diariesTab.Container())
+        })
+
+        finalBtn := widget.NewButton("Итоговые", func() {
+                d.switchTab(d.finalGradesTab.Container())
+        })
+
+        tabRow := container.NewGridWithColumns(4, journalBtn, topicsBtn, diaryBtn, finalBtn)
+
+        // Status label + tab bar
+        bottomBox := container.NewVBox(
+                d.statusLabel,
+                tabRow,
         )
 
-        cardJournal := modernCard("\U0001F4CB", "Журнал", "Оценки и посещаемость", colorCardBlue, func() {
-                d.navigateTo(d.buildJournalPage())
-        })
-        cardTopics := modernCard("\U0001F4DD", "Темы и ДЗ", "Темы уроков и задания", color.NRGBA{R: 16, G: 185, B: 129, A: 255}, func() {
-                d.navigateTo(d.buildTopicsPage())
-        })
-        cardDiary := modernCard("\U0001F4D3", "Дневник", "Подписи и комментарии", colorCardOrange, func() {
-                d.navigateTo(d.buildDiariesPage())
-        })
-        cardFinal := modernCard("\U0001F3C6", "Итоговые", "Четвертные и годовые", colorCardPurple, func() {
-                d.navigateTo(d.buildFinalGradesPage())
-        })
+        bg := canvas.NewRectangle(colorNavBG)
+        bg.SetMinSize(fyne.NewSize(0, 56))
 
-        row1 := container.NewGridWithColumns(2, cardJournal, cardTopics)
-        row2 := container.NewGridWithColumns(2, cardDiary, cardFinal)
-
-        cardsGrid := container.NewVBox(row1, row2)
-
-        return container.NewVBox(
-                headerSection,
-                container.NewCenter(cardsGrid),
-        )
+        return container.NewStack(bg, container.NewPadded(bottomBox))
 }
 
-// modernCard creates a sleek clickable card with rounded corners.
-func modernCard(icon, title, subtitle string, accent color.Color, onTap func()) *fyne.Container {
-        iconText := canvas.NewText(icon, color.White)
-        iconText.TextSize = 36
-        iconText.Alignment = fyne.TextAlignCenter
-
-        titleText := canvas.NewText(title, color.White)
-        titleText.TextStyle = fyne.TextStyle{Bold: true}
-        titleText.TextSize = 17
-        titleText.Alignment = fyne.TextAlignCenter
-
-        subText := canvas.NewText(subtitle, color.NRGBA{R: 220, G: 220, B: 220, A: 255})
-        subText.TextSize = 12
-        subText.Alignment = fyne.TextAlignCenter
-
-        content := container.NewVBox(
-                container.NewCenter(iconText),
-                container.NewCenter(titleText),
-                container.NewCenter(subText),
-        )
-
-        bg := canvas.NewRectangle(accent)
-        bg.SetMinSize(fyne.NewSize(220, 150))
-        bg.CornerRadius = 16
-
-        cardStack := container.NewStack(bg, container.NewPadded(content))
-        tapOverlay := newTapOverlay(onTap)
-
-        return container.NewStack(cardStack, tapOverlay)
-}
-
-// ------------------------------------------
-// NAVIGATION
-// ------------------------------------------
-
-func (d *Dashboard) navigateTo(page fyne.CanvasObject) {
-        d.navStack = append(d.navStack, d.currentPage)
+func (d *Dashboard) switchTab(page fyne.CanvasObject) {
         d.currentPage = page
         d.contentStack.Objects = []fyne.CanvasObject{page}
         d.contentStack.Refresh()
-}
-
-func (d *Dashboard) navigateBack() {
-        if len(d.navStack) == 0 {
-                return
-        }
-        prev := d.navStack[len(d.navStack)-1]
-        d.navStack = d.navStack[:len(d.navStack)-1]
-        d.currentPage = prev
-        d.contentStack.Objects = []fyne.CanvasObject{prev}
-        d.contentStack.Refresh()
-}
-
-func (d *Dashboard) makeSubPage(title string, content fyne.CanvasObject) *fyne.Container {
-        backBtn := widget.NewButtonWithIcon("", theme.NavigateBackIcon(), func() {
-                d.navigateBack()
-        })
-        backBtn.Importance = widget.LowImportance
-
-        titleLabel := canvas.NewText(title, colorNavBG)
-        titleLabel.TextStyle = fyne.TextStyle{Bold: true}
-        titleLabel.TextSize = 16
-
-        pageHeader := container.NewHBox(backBtn, titleLabel)
-        return container.NewBorder(pageHeader, nil, nil, nil, content)
-}
-
-// ------------------------------------------
-// SUB-PAGE BUILDERS
-// ------------------------------------------
-
-func (d *Dashboard) buildJournalPage() *fyne.Container {
-        return d.makeSubPage("Журнал — оценки и посещаемость", d.gradesContainer)
-}
-
-func (d *Dashboard) buildTopicsPage() *fyne.Container {
-        return d.makeSubPage("Темы и ДЗ — уроки и задания", d.topicsTab.Container())
-}
-
-func (d *Dashboard) buildDiariesPage() *fyne.Container {
-        return d.makeSubPage("Дневник — подписи и комментарии", d.diariesTab.Container())
-}
-
-func (d *Dashboard) buildFinalGradesPage() *fyne.Container {
-        return d.makeSubPage("Итоговые оценки", d.finalGradesTab.Container())
 }
 
 // ------------------------------------------
@@ -370,6 +298,17 @@ func (d *Dashboard) onClassSelected(selected string) {
                 return
         }
 
+        // Remember the previously selected subject name
+        prevSubjectName := ""
+        if d.selectedSubject != nil {
+                prevSubjectName = d.selectedSubject.SubjectName
+        }
+        // Remember previously selected quarter
+        prevQuarterName := ""
+        if d.selectedQuarter != nil {
+                prevQuarterName = d.selectedQuarter.Name
+        }
+
         d.selectedSubject = nil
         d.selectedQuarter = nil
 
@@ -386,19 +325,43 @@ func (d *Dashboard) onClassSelected(selected string) {
         fyne.Do(func() {
                 d.subjectSel.Options = subjectNames
                 d.subjectSel.Refresh()
-                d.subjectSel.ClearSelected()
                 d.quarterSel.Options = quarterNames
                 d.quarterSel.Refresh()
-                d.quarterSel.ClearSelected()
                 d.refreshBtn.Disable()
 
-                if len(subjectNames) > 0 {
+                // Try to keep the same subject if it exists in the new class
+                subjectFound := false
+                if prevSubjectName != "" {
+                        for i, name := range subjectNames {
+                                if name == prevSubjectName {
+                                        d.subjectSel.SetSelectedIndex(i)
+                                        subjectFound = true
+                                        break
+                                }
+                        }
+                }
+                if !subjectFound && len(subjectNames) > 0 {
                         d.subjectSel.SetSelectedIndex(0)
                 }
-                for i, q := range d.selectedGroup.Quarters {
-                        if q.CurrentQuarter {
-                                d.quarterSel.SetSelectedIndex(i)
-                                break
+
+                // Try to keep the same quarter
+                quarterFound := false
+                if prevQuarterName != "" {
+                        for i, name := range quarterNames {
+                                if name == prevQuarterName {
+                                        d.quarterSel.SetSelectedIndex(i)
+                                        quarterFound = true
+                                        break
+                                }
+                        }
+                }
+                if !quarterFound {
+                        // Default to current quarter
+                        for i, q := range d.selectedGroup.Quarters {
+                                if q.CurrentQuarter {
+                                        d.quarterSel.SetSelectedIndex(i)
+                                        break
+                                }
                         }
                 }
         })
@@ -484,7 +447,7 @@ func (d *Dashboard) loadData() {
 }
 
 // ------------------------------------------
-// GRADES TABLE — with double-click random popup
+// GRADES TABLE — selection, arrows, Enter, Delete
 // ------------------------------------------
 
 func (d *Dashboard) rebuildGradesTable() {
@@ -577,10 +540,22 @@ func (d *Dashboard) rebuildGradesTable() {
         }
         d.gradesTable.SetColumnWidth(totalCols-1, 50) // avg
 
-        // Double-click on student NAME → random fill for ALL dates in quarter
+        // Track selection state
         clickCount := 0
         var lastCellID widget.TableCellID
+
         d.gradesTable.OnSelected = func(id widget.TableCellID) {
+                // Track selected cell
+                d.selectedCell = &id
+
+                // Enable delete button if a grade cell is selected
+                if id.Row > 0 && id.Col >= 2 && id.Col < totalCols-1 {
+                        d.deleteBtn.Enable()
+                } else {
+                        d.deleteBtn.Disable()
+                }
+
+                // Detect double-click
                 if id == lastCellID {
                         clickCount++
                 } else {
@@ -588,20 +563,171 @@ func (d *Dashboard) rebuildGradesTable() {
                         lastCellID = id
                 }
 
-                d.gradesTable.Unselect(id)
-
-                // Double-click on student name column (col 1)
+                // Double-click on student name column (col 1) → random fill all dates
                 if clickCount >= 2 && id.Row > 0 && id.Col == 1 {
                         clickCount = 0
                         studentIdx := id.Row - 1
                         if studentIdx < len(d.students) {
                                 d.showRandomFillForStudent(studentIdx)
                         }
+                        return
                 }
+
+                // Double-click on a grade cell (date column) → edit single grade
+                if clickCount >= 2 && id.Row > 0 && id.Col >= 2 && id.Col < totalCols-1 {
+                        clickCount = 0
+                        studentIdx := id.Row - 1
+                        dateIdx := id.Col - 2
+                        if studentIdx < len(d.students) && dateIdx < len(d.dates) {
+                                d.showEditGradePopup(studentIdx, dateIdx)
+                        }
+                        return
+                }
+
+                // Don't unselect on single click — keep it selected for arrow keys
         }
 
         d.gradesContainer.Objects = []fyne.CanvasObject{d.gradesTable}
         d.gradesContainer.Refresh()
+}
+
+// ------------------------------------------
+// DELETE SELECTED CELL
+// ------------------------------------------
+
+func (d *Dashboard) deleteSelectedCell() {
+        if d.selectedCell == nil || d.students == nil || d.dates == nil {
+                return
+        }
+
+        id := *d.selectedCell
+        numDateCols := len(d.dates)
+        totalCols := 2 + numDateCols + 1
+
+        // Only grade cells (date columns)
+        if id.Row <= 0 || id.Col < 2 || id.Col >= totalCols-1 {
+                return
+        }
+
+        studentIdx := id.Row - 1
+        dateIdx := id.Col - 2
+
+        if studentIdx >= len(d.students) || dateIdx >= len(d.dates) {
+                return
+        }
+
+        student := d.students[studentIdx]
+        date := d.dates[dateIdx]
+
+        // Find the mark ID for this cell
+        var markID string
+        for _, sm := range student.SubjectMarks {
+                if sm.AssignmentDateID == date.AssignmentDateID {
+                        if sm.AssignmentMarkID != "" {
+                                markID = sm.AssignmentMarkID
+                        }
+                        break
+                }
+        }
+
+        if markID == "" {
+                d.statusLabel.SetText("Ячейка пуста — нечего удалять")
+                return
+        }
+
+        confirmMsg := fmt.Sprintf("Удалить оценку %s для %s %s — %s?",
+                student.SubjectMarks[0].ShortName, student.LastName, student.FirstName,
+                date.AssignmentDate[5:])
+
+        dialog.ShowConfirm("Удалить оценку", confirmMsg, func(ok bool) {
+                if !ok {
+                        return
+                }
+                go func() {
+                        err := d.controller.GetClient().DeleteMark(markID)
+                        fyne.Do(func() {
+                                if err != nil {
+                                        dialog.ShowError(fmt.Errorf("Ошибка удаления: %v", err), d.controller.GetWindow())
+                                } else {
+                                        d.statusLabel.SetText(fmt.Sprintf("Оценка удалена: %s %s — %s",
+                                                student.LastName, student.FirstName, date.AssignmentDate[5:]))
+                                        go d.loadData()
+                                }
+                        })
+                }()
+        }, d.controller.GetWindow())
+}
+
+// ------------------------------------------
+// EDIT GRADE POPUP — double-click on a grade cell
+// ------------------------------------------
+
+func (d *Dashboard) showEditGradePopup(studentIdx, dateIdx int) {
+        student := d.students[studentIdx]
+        date := d.dates[dateIdx]
+
+        // Find current mark
+        var currentMark string
+        for _, sm := range student.SubjectMarks {
+                if sm.AssignmentDateID == date.AssignmentDateID {
+                        currentMark = sm.ShortName
+                        break
+                }
+        }
+
+        gradeEntry := widget.NewEntry()
+        gradeEntry.SetPlaceHolder("2-10")
+        if currentMark != "" && currentMark != "—" {
+                gradeEntry.SetText(currentMark)
+        }
+
+        header := fmt.Sprintf("%s %s — %s (%s)",
+                student.LastName, student.FirstName,
+                date.WeekdayShortName, date.AssignmentDate[5:])
+
+        content := container.NewVBox(
+                widget.NewLabelWithStyle(header, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+                widget.NewSeparator(),
+                container.NewGridWithColumns(2,
+                        widget.NewLabel("Оценка (2-10):"),
+                        gradeEntry,
+                ),
+        )
+
+        dialog.ShowForm("Оценка", "Сохранить", "Отмена", []*widget.FormItem{
+                widget.NewFormItem("", content),
+        }, func(ok bool) {
+                if !ok {
+                        return
+                }
+                gradeStr := gradeEntry.Text
+                if gradeStr == "" {
+                        return
+                }
+                grade, err := strconv.Atoi(gradeStr)
+                if err != nil || grade < 2 || grade > 10 {
+                        dialog.ShowError(fmt.Errorf("Оценка от 2 до 10"), d.controller.GetWindow())
+                        return
+                }
+
+                go func() {
+                        err := d.controller.GetClient().CreateMark(
+                                student.StudentID,
+                                date.AssignmentDateID,
+                                d.selectedQuarter.ID,
+                                grade,
+                        )
+                        fyne.Do(func() {
+                                if err != nil {
+                                        dialog.ShowError(fmt.Errorf("Ошибка: %v", err), d.controller.GetWindow())
+                                } else {
+                                        d.statusLabel.SetText(fmt.Sprintf("Оценка %d: %s %s — %s",
+                                                grade, student.LastName, student.FirstName, date.AssignmentDate[5:]))
+                                        go d.loadData()
+                                }
+                        })
+                }()
+        }, d.controller.GetWindow())
 }
 
 // ------------------------------------------
