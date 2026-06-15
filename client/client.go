@@ -94,8 +94,6 @@ type Day struct {
         WeekdayShortName string `json:"weekdayShortName"`
         SubjectID        int    `json:"subjectId"`
         SubjectName      string `json:"subjectName"`
-        Topic            string `json:"topic"`
-        HomeWork         string `json:"homeWork"`
 }
 
 type Student struct {
@@ -148,11 +146,7 @@ type CreateMarkRequest struct {
         Mark                   int    `json:"mark"`
 }
 
-type UpdateAssignmentRequest struct {
-        ScheduleDateID string `json:"schedule_date_id"`
-        Topic          string `json:"topic,omitempty"`
-        HomeWork       string `json:"homeWork,omitempty"`
-}
+
 
 // EdonishClient manages HTTP operations and session state.
 type EdonishClient struct {
@@ -481,23 +475,7 @@ func (c *EdonishClient) DeleteMark(markID string) error {
         return err
 }
 
-// UpdateAssignment updates the lesson topic and homework.
-func (c *EdonishClient) UpdateAssignment(dateID string, topic, homework string) error {
-        reqBody := UpdateAssignmentRequest{
-                ScheduleDateID: dateID,
-                Topic:          topic,
-                HomeWork:       homework,
-        }
 
-        u := c.buildURL("/journal/assignment/update", nil)
-        req, err := http.NewRequest("POST", u, nil)
-        if err != nil {
-                return err
-        }
-
-        _, _, err = c.doRequest(req, reqBody)
-        return err
-}
 
 // --- Diary types ---
 
@@ -535,17 +513,6 @@ type YearMarkCreateRequest struct {
         GroupSubgroupStudentID int `json:"group_subgroup_student_id"`
         YearPropertyID         int `json:"year_property_id"`
         Mark                   int `json:"mark"`
-}
-
-// TopicEntry represents a topic for a date.
-type TopicEntry struct {
-        ScheduleDateID string `json:"scheduleDateId"`
-        AssignmentDate string `json:"assignmentDate"`
-        Topic          string `json:"topic"`
-        HomeWork       string `json:"homeWork"`
-        WeekdayName    string `json:"weekdayName"`
-        SubjectID      int    `json:"subjectId"`
-        SubjectName    string `json:"subjectName"`
 }
 
 // FinalGrade represents an итоговая оценка (quarter/semester/year).
@@ -599,6 +566,30 @@ type FinalGradeStudent struct {
         QuarterMarks  [4]QuarterMark  // Q1-Q4
         SemesterMarks [2]SemesterMark // H1-H2
         YearMark      *YearMark       // Year
+}
+
+// GetAverageScore implements ui.AvgScorer interface.
+func (f *FinalGradeStudent) GetAverageScore() float64 {
+        if f.AverageScore == "" || f.AverageScore == "0.0" {
+                return 0
+        }
+        v, err := strconv.ParseFloat(f.AverageScore, 64)
+        if err != nil {
+                return 0
+        }
+        return v
+}
+
+// Student GetAverageScore implements ui.AvgScorer interface.
+func (s *Student) GetAverageScore() float64 {
+        if s.AverageScore == "" || s.AverageScore == "0.0" {
+                return 0
+        }
+        v, err := strconv.ParseFloat(s.AverageScore, 64)
+        if err != nil {
+                return 0
+        }
+        return v
 }
 
 // GetFinalGradesStudents fetches students with final marks using the correct API.
@@ -750,65 +741,6 @@ func (c *EdonishClient) CreateYearMark(studentID, yearPropertyID, mark int) erro
         return err
 }
 
-// GetTopics fetches topic entries for a group/subject/quarter.
-func (c *EdonishClient) GetTopics(groupID, subjectID, quarterID int) ([]TopicEntry, error) {
-        params := map[string]string{
-                "group_id":            strconv.Itoa(groupID),
-                "subject_id":          strconv.Itoa(subjectID),
-                "quarter_property_id": strconv.Itoa(quarterID),
-        }
-        u := c.buildURL("/journal/dates", params)
-        req, err := http.NewRequest("GET", u, nil)
-        if err != nil {
-                return nil, err
-        }
-
-        respBody, _, err := c.doRequest(req, nil)
-        if err != nil {
-                return nil, err
-        }
-
-        var qDates []QuarterDates
-        if err := json.Unmarshal(respBody, &qDates); err != nil {
-                return nil, err
-        }
-
-        var topics []TopicEntry
-        for _, qd := range qDates {
-                for _, d := range qd.Days {
-                        topics = append(topics, TopicEntry{
-                                ScheduleDateID: d.AssignmentDateID,
-                                AssignmentDate: d.AssignmentDate,
-                                Topic:          d.Topic,
-                                HomeWork:       d.HomeWork,
-                                WeekdayName:    d.WeekdayName,
-                                SubjectID:      d.SubjectID,
-                                SubjectName:    d.SubjectName,
-                        })
-                }
-        }
-        return topics, nil
-}
-
-// UpdateTopic updates the topic for a schedule date.
-func (c *EdonishClient) UpdateTopic(dateID, topic string) error {
-        reqBody := struct {
-                ScheduleDateID string `json:"schedule_date_id"`
-                Topic          string `json:"topic"`
-        }{
-                ScheduleDateID: dateID,
-                Topic:          topic,
-        }
-
-        u := c.buildURL("/journal/assignment/update", nil)
-        req, err := http.NewRequest("POST", u, nil)
-        if err != nil {
-                return err
-        }
-
-        _, _, err = c.doRequest(req, reqBody)
-        return err
-}
 
 // UpdateFinalGrade updates a quarter/semester/year mark via the generic quarter_mark/update endpoint.
 func (c *EdonishClient) UpdateFinalGrade(markID string, newMark int) error {

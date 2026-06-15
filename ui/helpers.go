@@ -1,18 +1,26 @@
 package ui
 
 import (
+	"fmt"
+	"image/color"
+	"strconv"
+	"time"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
-	"image/color"
 )
 
-// Diligence marks — these match the edonish.tj API enum values.
-var DiligenceMarks = []string{"Отличный", "Хорошо", "Удовлетворительный", "Неудовлетворительный"}
+// ------------------------------------------
+// GRADE COMBOS — for random fill
+// ------------------------------------------
 
-// Grade combinations for random fill
+// Diligence marks — these match the edonish.tj API enum values.
+var DiligenceMarks = []string{"Отличный", "Хорошо", "Удовлетворительный", "Неудовлетворительно"}
+
+// GradeCombo defines a named range for random grade generation.
 type GradeCombo struct {
 	Name   string
 	MinVal int
@@ -27,44 +35,90 @@ var GradeCombos = []GradeCombo{
 	{Name: "Хорошо только", MinVal: 7, MaxVal: 8},
 }
 
-// Weight period options
+// WeightPeriods defines period options for fill operations.
 var WeightPeriods = []string{"Полугодие 1", "Полугодие 2", "Весь год", "До текущей даты"}
 
-// Topic templates for sequential fill — keyed by quality level names
-var TopicTemplates = map[string][]string{
-	"Отличный": {
-		"Повторение материала",
-		"Решение задач повышенной сложности",
-		"Контрольная работа",
-		"Практическая работа",
-		"Обобщение и систематизация знаний",
-	},
-	"Хорошо": {
-		"Изучение нового материала",
-		"Закрепление пройденного",
-		"Самостоятельная работа",
-		"Работа с упражнениями",
-		"Проверка знаний",
-	},
-	"Удовлетворительно": {
-		"Объяснение новой темы",
-		"Работа с учебником",
-		"Устный опрос",
-		"Комбинированный урок",
-		"Беседа по теме",
-	},
-	"Неудовлетворительно": {
-		"Повторение",
-		"Подготовка к контрольной",
-		"Работа над ошибками",
-		"Консультация",
-		"Резервный урок",
-	},
+// ------------------------------------------
+// GRADE CALCULATION UTILITIES
+// ------------------------------------------
+
+// AverageToGrade converts a floating-point average score to a 10-point grade.
+// Uses standard rounding thresholds.
+func AverageToGrade(avg float64) int {
+	switch {
+	case avg >= 9.5:
+		return 10
+	case avg >= 8.5:
+		return 9
+	case avg >= 7.5:
+		return 8
+	case avg >= 6.5:
+		return 7
+	case avg >= 5.5:
+		return 6
+	case avg >= 4.5:
+		return 5
+	case avg >= 3.5:
+		return 4
+	case avg >= 2.5:
+		return 3
+	default:
+		return 2
+	}
+}
+
+// ClassAverageToCategory determines the sign category and comment based on class average.
+// Returns (diligence, comment).
+func ClassAverageToCategory(avg float64) (string, string) {
+	switch {
+	case avg >= 8.5:
+		return "Отличный", "Хорошо и отлично"
+	case avg >= 6.5:
+		return "Хорошо", "Хорошо и удовлетворительно"
+	default:
+		return "Удовлетворительный", "Плохо и удовлетворительно"
+	}
+}
+
+// ParseAverageScore safely parses average score string to float64.
+func ParseAverageScore(s string) float64 {
+	if s == "" || s == "0.0" || s == "—" {
+		return 0
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+// CalcClassAverage computes the average of all student average scores.
+func CalcClassAverage(students []AvgScorer) float64 {
+	if len(students) == 0 {
+		return 0
+	}
+	var total float64
+	var count int
+	for _, s := range students {
+		avg := s.GetAverageScore()
+		if avg > 0 {
+			total += avg
+			count++
+		}
+	}
+	if count == 0 {
+		return 0
+	}
+	return total / float64(count)
+}
+
+// AvgScorer interface for objects that have an average score.
+type AvgScorer interface {
+	GetAverageScore() float64
 }
 
 // ------------------------------------------
 // BEHAVIOR COMMENT TEMPLATES
-// (Teacher/parent notes in real school diaries)
 // ------------------------------------------
 
 // BehaviorCategory defines the type of behavior note.
@@ -86,8 +140,6 @@ var BehaviorCategories = []string{
 }
 
 // BehaviorTemplates maps a category to a pool of ready-made teacher comments.
-// These are used like real diary entries: teacher writes a note about the student,
-// parent reads it and signs.
 var BehaviorTemplates = map[BehaviorCategory][]string{
 	BehaviorPraise: {
 		"Учится отлично, молодец! Так держать!",
@@ -130,7 +182,6 @@ var BehaviorTemplates = map[BehaviorCategory][]string{
 }
 
 // BehaviorToDiligence maps a behavior category to the corresponding diligence mark.
-// This determines what diligence mark is set alongside the behavior comment.
 var BehaviorToDiligence = map[BehaviorCategory]string{
 	BehaviorPraise:    "Отличный",
 	BehaviorComplaint: "Неудовлетворительно",
@@ -139,7 +190,6 @@ var BehaviorToDiligence = map[BehaviorCategory]string{
 }
 
 // DiligenceToBehaviorComment returns a default behavior comment for a given diligence mark.
-// This is used when filling diaries with only a diligence mark selected.
 var DiligenceToBehaviorComment = map[string]string{
 	"Отличный":            "Превосходная успеваемость и поведение. Молодец!",
 	"Хорошо":              "Хорошо учится и ведёт себя на уроках.",
@@ -147,7 +197,43 @@ var DiligenceToBehaviorComment = map[string]string{
 	"Неудовлетворительно": "Неудовлетворительная успеваемость, требуется внимание родителей.",
 }
 
-// getDiligenceColor returns color for diligence mark
+// ------------------------------------------
+// SIGN COMMENT TEMPLATES (for final grades tab)
+// ------------------------------------------
+
+// SignCommentTemplates maps category to comments for auto-signing.
+var SignCommentTemplates = map[string][]string{
+	"Хорошо и отлично": {
+		"Высокая успеваемость класса. Рекомендуется продолжать в том же духе.",
+		"Отличные результаты по итогам периода. Класс показывает стабильные знания.",
+		"Успеваемость класса на высоком уровне. Большинство учеников справляются отлично.",
+	},
+	"Хорошо и удовлетворительно": {
+		"Успеваемость класса на среднем уровне. Есть потенциал для роста.",
+		"Результаты неоднородные, часть учеников показывает хорошие знания.",
+		"Средний уровень успеваемости. Требуется дополнительная работа с отстающими.",
+	},
+	"Плохо и удовлетворительно": {
+		"Низкая успеваемость класса. Необходимы дополнительные занятия.",
+		"Многие ученики не справляются с программой. Требуется внимание родителей.",
+		"Успеваемость ниже среднего. Рекомендуется индивидуальная работа.",
+	},
+}
+
+// RandomSignComment picks a random sign comment for a category.
+func RandomSignComment(category string) string {
+	templates, ok := SignCommentTemplates[category]
+	if !ok || len(templates) == 0 {
+		return "Подпись классного руководителя"
+	}
+	return templates[time.Now().Nanosecond()%len(templates)]
+}
+
+// ------------------------------------------
+// COLOR HELPERS
+// ------------------------------------------
+
+// getDiligenceColor returns color for diligence mark.
 func getDiligenceColor(mark string) color.Color {
 	switch mark {
 	case "Отличный":
@@ -179,18 +265,45 @@ func getBehaviorColor(cat BehaviorCategory) color.Color {
 	}
 }
 
-// MakeFixedHeader creates a fixed header bar
+// GradeColor returns a color for a numeric grade.
+func GradeColor(grade int) color.Color {
+	switch {
+	case grade >= 9:
+		return color.NRGBA{R: 22, G: 163, B: 74, A: 255}  // Green
+	case grade >= 7:
+		return color.NRGBA{R: 37, G: 99, B: 235, A: 255}   // Blue
+	case grade >= 5:
+		return color.NRGBA{R: 217, G: 119, B: 6, A: 255}   // Orange
+	default:
+		return color.NRGBA{R: 220, G: 38, B: 38, A: 255}   // Red
+	}
+}
+
+// ------------------------------------------
+// UI HELPERS
+// ------------------------------------------
+
+// MakeFixedHeader creates a fixed header bar.
 func MakeFixedHeader(content fyne.CanvasObject) *fyne.Container {
 	bg := canvas.NewRectangle(color.NRGBA{R: 245, G: 245, B: 245, A: 255})
 	return container.NewStack(bg, container.NewPadded(content))
 }
 
-// FormatSignedStatus returns colored text for signed status
+// FormatSignedStatus returns colored text for signed status.
 func FormatSignedStatus(signed bool) (string, color.Color) {
 	if signed {
 		return "Подписано", color.NRGBA{R: 22, G: 163, B: 74, A: 255}
 	}
 	return "Не подписано", color.NRGBA{R: 220, G: 38, B: 38, A: 255}
+}
+
+// FormatStudentName returns "LastName FirstName M." format.
+func FormatStudentName(last, first, middle string) string {
+	name := fmt.Sprintf("%s %s", last, first)
+	if middle != "" {
+		name += " " + string([]rune(middle)[:1]) + "."
+	}
+	return name
 }
 
 // ------------------------------------------
@@ -203,24 +316,20 @@ type tapOverlay struct {
 	onTap func()
 }
 
-// newTapOverlay creates a transparent tappable area.
 func newTapOverlay(onTap func()) *tapOverlay {
 	t := &tapOverlay{onTap: onTap}
 	t.ExtendBaseWidget(t)
 	return t
 }
 
-// CreateRenderer returns a minimal renderer (empty/transparent).
 func (t *tapOverlay) CreateRenderer() fyne.WidgetRenderer {
 	return widget.NewSimpleRenderer(canvas.NewRectangle(color.NRGBA{R: 0, G: 0, B: 0, A: 0}))
 }
 
-// Tapped handles a tap event by calling the onTap callback.
 func (t *tapOverlay) Tapped(*fyne.PointEvent) {
 	if t.onTap != nil {
 		t.onTap()
 	}
 }
 
-// TappedSecondary is a no-op for secondary taps.
 func (t *tapOverlay) TappedSecondary(*fyne.PointEvent) {}

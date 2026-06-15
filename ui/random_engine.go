@@ -2,15 +2,17 @@ package ui
 
 import (
 	"math/rand"
-	"strings"
+	"time"
 )
 
 // Note: In Go 1.20+, the global random generator is automatically
 // seeded with a random value. No explicit rand.Seed() or init() needed.
 
+// ------------------------------------------
+// GRADE RANDOM
+// ------------------------------------------
+
 // RandomDiligenceMark picks a random diligence mark from the pool.
-// combo can be: "Отличный", "Хорошо", "Удовлетворительный", "Неудовлетворительно"
-// or "random" for fully random.
 func RandomDiligenceMark(combo string) string {
 	if combo == "random" || combo == "" {
 		return DiligenceMarks[rand.Intn(len(DiligenceMarks))]
@@ -33,43 +35,12 @@ func RandomGradeForCombo(comboName string) int {
 			return RandomGradeInRange(c.MinVal, c.MaxVal)
 		}
 	}
-	// Default: Good and Excellent
 	return RandomGradeInRange(7, 10)
 }
 
-// RandomTopicForDiligence picks a random topic template for a given diligence level.
-func RandomTopicForDiligence(diligence string) string {
-	topics, ok := TopicTemplates[diligence]
-	if !ok || len(topics) == 0 {
-		for _, t := range TopicTemplates {
-			topics = append(topics, t...)
-		}
-	}
-	if len(topics) == 0 {
-		return "Урок"
-	}
-	return topics[rand.Intn(len(topics))]
-}
-
-// SequentialTopicForDiligence picks a topic template sequentially for a given diligence level.
-// idx is the sequential index; it cycles through the pool using modulo.
-func SequentialTopicForDiligence(diligence string, idx int) string {
-	topics, ok := TopicTemplates[diligence]
-	if !ok || len(topics) == 0 {
-		for _, t := range TopicTemplates {
-			topics = append(topics, t...)
-		}
-	}
-	if len(topics) == 0 {
-		return "Урок"
-	}
-	return topics[idx%len(topics)]
-}
-
-// RandomDiligenceCombo picks a random diligence combination.
-// Returns one of: "Отличный", "Хорошо", "Удовлетворительный", "Неудовлетворительно"
+// RandomDiligenceCombo picks a random diligence combination with weights.
 func RandomDiligenceCombo() string {
-	weights := []int{35, 35, 20, 10} // Отличный, Хорошо, Удовлетворительный, Неудовлетворительно
+	weights := []int{35, 35, 20, 10}
 	total := 0
 	for _, w := range weights {
 		total += w
@@ -82,7 +53,25 @@ func RandomDiligenceCombo() string {
 			return DiligenceMarks[i]
 		}
 	}
-	return DiligenceMarks[1] // default "Хорошо"
+	return DiligenceMarks[1]
+}
+
+// ------------------------------------------
+// DATE RANDOM
+// ------------------------------------------
+
+// RandomDateInRange generates a random date between start and end (inclusive).
+// Returns a formatted date string "YYYY-MM-DD".
+func RandomDateInRange(start, end time.Time) time.Time {
+	if start.After(end) {
+		start, end = end, start
+	}
+	delta := end.Sub(start).Hours() / 24
+	if delta <= 0 {
+		return start
+	}
+	offset := rand.Int63n(int64(delta))
+	return start.AddDate(0, 0, int(offset))
 }
 
 // ------------------------------------------
@@ -99,7 +88,6 @@ func RandomBehaviorComment(category BehaviorCategory) string {
 }
 
 // SequentialBehaviorComment picks a behavior comment sequentially for a given category.
-// idx cycles through the pool using modulo.
 func SequentialBehaviorComment(category BehaviorCategory, idx int) string {
 	templates, ok := BehaviorTemplates[category]
 	if !ok || len(templates) == 0 {
@@ -108,10 +96,9 @@ func SequentialBehaviorComment(category BehaviorCategory, idx int) string {
 	return templates[idx%len(templates)]
 }
 
-// RandomBehaviorCategory picks a random behavior category.
-// Weighted towards praise and mixed.
+// RandomBehaviorCategory picks a random behavior category with weights.
 func RandomBehaviorCategory() BehaviorCategory {
-	weights := []int{40, 15, 30, 15} // Прахвала, Жалоба, Смешанный, Нейтральный
+	weights := []int{40, 15, 30, 15}
 	total := 0
 	for _, w := range weights {
 		total += w
@@ -128,13 +115,16 @@ func RandomBehaviorCategory() BehaviorCategory {
 	return BehaviorNeutral
 }
 
-// GenerateBehaviorWithDiligence returns a behavior comment and corresponding diligence mark
-// for a given category. This is the main function used for batch diary filling.
+// GenerateBehaviorWithDiligence returns a behavior comment and diligence mark.
 func GenerateBehaviorWithDiligence(category BehaviorCategory, idx int) (comment string, diligence string) {
 	comment = SequentialBehaviorComment(category, idx)
 	diligence = BehaviorToDiligence[category]
 	return
 }
+
+// ------------------------------------------
+// PERIOD HELPERS
+// ------------------------------------------
 
 // ShouldFillDate determines if a date should be filled based on the weight period.
 func ShouldFillDate(period, quarterName, currentDate, assignmentDate string) bool {
@@ -152,17 +142,13 @@ func ShouldFillDate(period, quarterName, currentDate, assignmentDate string) boo
 	}
 }
 
-// GenerateTopicLine generates a complete topic line with subject context.
-func GenerateTopicLine(subject, topicBase string, lineNum int) string {
-	if strings.TrimSpace(topicBase) == "" {
-		return topicBase
-	}
-	return topicBase
-}
+// ------------------------------------------
+// BATCH HELPERS
+// ------------------------------------------
 
 // BatchRandomGrades generates a map of studentID -> random grade for a given combo.
 func BatchRandomGrades(studentIDs []int, comboName string) map[int]int {
-	result := make(map[int]int)
+	result := make(map[int]int, len(studentIDs))
 	for _, id := range studentIDs {
 		result[id] = RandomGradeForCombo(comboName)
 	}
