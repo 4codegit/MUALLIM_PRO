@@ -184,7 +184,7 @@ func (d *Dashboard) buildHeader() *fyne.Container {
         appTitle.TextStyle = fyne.TextStyle{Bold: true}
         appTitle.TextSize = 18
 
-        versionTag := canvas.NewText("v5.3.4", colorAccent)
+        versionTag := canvas.NewText("v5.4.0", colorAccent)
         versionTag.TextSize = 11
         versionTag.TextStyle = fyne.TextStyle{Bold: true}
 
