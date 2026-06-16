@@ -5,6 +5,7 @@ import (
         "image/color"
         "strconv"
         "sync"
+        "time"
 
         "fyne.io/fyne/v2"
         "fyne.io/fyne/v2/canvas"
@@ -147,7 +148,7 @@ func (d *Dashboard) buildHeader() *fyne.Container {
         appTitle.TextStyle = fyne.TextStyle{Bold: true}
         appTitle.TextSize = 18
 
-        versionTag := canvas.NewText("v5.3.2", colorAccent)
+        versionTag := canvas.NewText("v5.3.3", colorAccent)
         versionTag.TextSize = 11
         versionTag.TextStyle = fyne.TextStyle{Bold: true}
 
@@ -557,9 +558,11 @@ func (d *Dashboard) rebuildGradesTable() {
         }
         d.gradesTable.SetColumnWidth(totalCols-1, 50) // avg
 
-        // Track selection state
-        clickCount := 0
-        var lastCellID widget.TableCellID
+        // Track selection state — time-based double-click detection
+        // Fyne Table.OnSelected does NOT fire when clicking an already-selected cell,
+        // so we must unselect after each click to allow re-selection on the next click.
+        var lastTapTime time.Time
+        var lastTapCell widget.TableCellID
 
         d.gradesTable.OnSelected = func(id widget.TableCellID) {
                 // Track selected cell
@@ -572,36 +575,51 @@ func (d *Dashboard) rebuildGradesTable() {
                         d.deleteBtn.Disable()
                 }
 
-                // Detect double-click
-                if id == lastCellID {
-                        clickCount++
+                // Time-based double-click detection (600ms window)
+                now := time.Now()
+                isDoubleTap := id == lastTapCell && now.Sub(lastTapTime) < 600*time.Millisecond
+
+                if isDoubleTap {
+                        // Reset tap tracking
+                        lastTapTime = time.Time{}
+                        lastTapCell = widget.TableCellID{}
+
+                        // Double-click on student name column (col 1) → random fill all dates
+                        if id.Row > 0 && id.Col == 1 {
+                                studentIdx := id.Row - 1
+                                if studentIdx < len(d.students) {
+                                        d.showRandomFillForStudent(studentIdx)
+                                }
+                                return
+                        }
+
+                        // Double-click on a grade cell (date column) → edit single grade
+                        if id.Row > 0 && id.Col >= 2 && id.Col < totalCols-1 {
+                                studentIdx := id.Row - 1
+                                dateIdx := id.Col - 2
+                                if studentIdx < len(d.students) && dateIdx < len(d.dates) {
+                                        d.showEditGradePopup(studentIdx, dateIdx)
+                                }
+                                return
+                        }
                 } else {
-                        clickCount = 1
-                        lastCellID = id
+                        // Single click — record for potential double-click
+                        lastTapTime = now
+                        lastTapCell = id
                 }
 
-                // Double-click on student name column (col 1) → random fill all dates
-                if clickCount >= 2 && id.Row > 0 && id.Col == 1 {
-                        clickCount = 0
-                        studentIdx := id.Row - 1
-                        if studentIdx < len(d.students) {
-                                d.showRandomFillForStudent(studentIdx)
-                        }
-                        return
-                }
-
-                // Double-click on a grade cell (date column) → edit single grade
-                if clickCount >= 2 && id.Row > 0 && id.Col >= 2 && id.Col < totalCols-1 {
-                        clickCount = 0
-                        studentIdx := id.Row - 1
-                        dateIdx := id.Col - 2
-                        if studentIdx < len(d.students) && dateIdx < len(d.dates) {
-                                d.showEditGradePopup(studentIdx, dateIdx)
-                        }
-                        return
-                }
-
-                // Don't unselect on single click — keep it selected for arrow keys
+                // Unselect after a short delay so the next click triggers OnSelected again.
+                // Without this, Fyne ignores second click on the same cell.
+                // We keep d.selectedCell intact so arrow keys still work.
+                savedCell := id
+                go func() {
+                        time.Sleep(100 * time.Millisecond)
+                        fyne.Do(func() {
+                                d.gradesTable.Unselect(savedCell)
+                                // Restore selectedCell so keyboard navigation still works
+                                d.selectedCell = &savedCell
+                        })
+                }()
         }
 
         // Wrap table in scroll for cross-platform responsiveness (horizontal + vertical)
