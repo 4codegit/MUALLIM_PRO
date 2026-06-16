@@ -594,6 +594,163 @@ func (c *EdonishClient) CreateDiaryComment(studentID int, scheduleDateID string,
         return err
 }
 
+// --- Diary (MyClass) methods ---
+// These use the /myclass/* endpoints, NOT /journal/*.
+// The diary (Дневник) on edonish.tj uses a completely separate API:
+//   OPTIONS /myclass                              → groups list
+//   GET     /myclass/students?group_id=...        → students list
+//   OPTIONS /myclass/student/diary/signature      → behavior (diligence) options
+//   GET     /myclass/student/diary/signature      → current signature data
+//   POST    /myclass/student/diary/signature      → sign with behavior_id
+
+// MyClassGroup represents a class group from the /myclass API.
+type MyClassGroup struct {
+        ID   int    `json:"id"`
+        Name string `json:"name"`
+}
+
+// MyClassStudent represents a student from the /myclass/students API.
+type MyClassStudent struct {
+        ID        int    `json:"id"`
+        LastName  string `json:"lastName"`
+        FirstName string `json:"firstName"`
+        GroupID   int    `json:"groupId"`
+        GroupName string `json:"groupName"`
+}
+
+// DiaryBehaviorOption represents a behavior/diligence option for diary signatures.
+type DiaryBehaviorOption struct {
+        ID    int    `json:"id"`
+        Title string `json:"title"`
+}
+
+// DiaryDay represents a single day in the diary data.
+type DiaryDay struct {
+        Date      string `json:"date"`
+        DayName   string `json:"dayName"`
+        IsSunday  bool   `json:"isSunday"`
+        Signed    bool   `json:"signed"`
+        Behavior  string `json:"behavior"`
+        Comment   string `json:"comment"`
+}
+
+// GetMyClassGroups fetches the list of class groups for the diary.
+// Uses OPTIONS /myclass?lang=...&school_id=...
+func (c *EdonishClient) GetMyClassGroups() ([]MyClassGroup, error) {
+        u := c.buildURL("/myclass", nil)
+        req, err := http.NewRequest("OPTIONS", u, nil)
+        if err != nil {
+                return nil, err
+        }
+
+        respBody, _, err := c.doRequest(req, nil)
+        if err != nil {
+                return nil, err
+        }
+
+        var groups []MyClassGroup
+        if err := json.Unmarshal(respBody, &groups); err != nil {
+                return nil, err
+        }
+        return groups, nil
+}
+
+// GetMyClassStudents fetches students for a specific class group.
+// Uses GET /myclass/students?group_id=...&school_id=...
+func (c *EdonishClient) GetMyClassStudents(groupID int) ([]MyClassStudent, error) {
+        params := map[string]string{
+                "group_id": strconv.Itoa(groupID),
+        }
+        u := c.buildURL("/myclass/students", params)
+        req, err := http.NewRequest("GET", u, nil)
+        if err != nil {
+                return nil, err
+        }
+
+        respBody, _, err := c.doRequest(req, nil)
+        if err != nil {
+                return nil, err
+        }
+
+        var students []MyClassStudent
+        if err := json.Unmarshal(respBody, &students); err != nil {
+                return nil, err
+        }
+        return students, nil
+}
+
+// GetDiaryBehaviorOptions fetches available behavior/diligence options for diary signatures.
+// Uses OPTIONS /myclass/student/diary/signature?lang=...&school_id=...
+func (c *EdonishClient) GetDiaryBehaviorOptions() ([]DiaryBehaviorOption, error) {
+        u := c.buildURL("/myclass/student/diary/signature", nil)
+        req, err := http.NewRequest("OPTIONS", u, nil)
+        if err != nil {
+                return nil, err
+        }
+
+        respBody, _, err := c.doRequest(req, nil)
+        if err != nil {
+                return nil, err
+        }
+
+        var options []DiaryBehaviorOption
+        if err := json.Unmarshal(respBody, &options); err != nil {
+                return nil, err
+        }
+        return options, nil
+}
+
+// GetDiaryData fetches diary data for a student in a date range.
+// Uses GET /myclass/diary?lang=...&start_date=...&end_date=...&group_id=...&school_student_id=...&school_id=...
+func (c *EdonishClient) GetDiaryData(groupID, studentID int, startDate, endDate string) ([]DiaryDay, error) {
+        params := map[string]string{
+                "group_id":           strconv.Itoa(groupID),
+                "school_student_id":  strconv.Itoa(studentID),
+                "start_date":         startDate,
+                "end_date":           endDate,
+        }
+        u := c.buildURL("/myclass/diary", params)
+        req, err := http.NewRequest("GET", u, nil)
+        if err != nil {
+                return nil, err
+        }
+
+        respBody, _, err := c.doRequest(req, nil)
+        if err != nil {
+                return nil, err
+        }
+
+        var days []DiaryDay
+        if err := json.Unmarshal(respBody, &days); err != nil {
+                // The API might return null for empty
+                return []DiaryDay{}, nil
+        }
+        return days, nil
+}
+
+// SignDiary signs the diary for a student with a specific behavior in a date range.
+// Uses POST /myclass/student/diary/signature?behavior_id=...&start_date=...&end_date=...&student_id=...&school_id=...
+// If behaviorID is 0, it signs without setting a behavior.
+func (c *EdonishClient) SignDiary(studentID, behaviorID int, startDate, endDate string) error {
+        params := map[string]string{
+                "student_id": strconv.Itoa(studentID),
+                "start_date": startDate,
+                "end_date":   endDate,
+        }
+        if behaviorID > 0 {
+                params["behavior_id"] = strconv.Itoa(behaviorID)
+        }
+
+        u := c.buildURL("/myclass/student/diary/signature", params)
+        req, err := http.NewRequest("POST", u, nil)
+        if err != nil {
+                return err
+        }
+
+        _, _, err = c.doRequest(req, nil)
+        return err
+}
+
 // --- Final Grades methods ---
 
 // FinalGradeStudent holds merged final grade data for one student across all periods.

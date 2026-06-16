@@ -1,18 +1,18 @@
 package ui
 
 import (
-        "fmt"
-        "image/color"
-        "time"
+	"fmt"
+	"image/color"
+	"time"
 
-        "fyne.io/fyne/v2"
-        "fyne.io/fyne/v2/canvas"
-        "fyne.io/fyne/v2/container"
-        "fyne.io/fyne/v2/dialog"
-        "fyne.io/fyne/v2/theme"
-        "fyne.io/fyne/v2/widget"
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/widget"
 
-        "github.com/4codegit/edonish-auto/client"
+	"github.com/4codegit/edonish-auto/client"
 )
 
 // ------------------------------------------
@@ -21,32 +21,32 @@ import (
 
 // DiligenceCombo defines a named diligence fill preset.
 type DiligenceCombo struct {
-        Label       string
-        Diligences  []string // pool to randomly pick from
-        Description string
+	Label       string
+	Diligences  []string // pool to randomly pick from
+	Description string
 }
 
 var DiligenceCombos = []DiligenceCombo{
-        {
-                Label:       "Отлично",
-                Diligences:  []string{"Отличный"},
-                Description: "Ставит «Отличный» на все пустые даты до сегодняшнего дня",
-        },
-        {
-                Label:       "Отлично && Хорошо",
-                Diligences:  []string{"Отличный", "Хорошо"},
-                Description: "Рандом: «Отличный» или «Хорошо» на каждую пустую дату",
-        },
-        {
-                Label:       "Хорошо && Удовлетворительный",
-                Diligences:  []string{"Хорошо", "Удовлетворительный"},
-                Description: "Рандом: «Хорошо» или «Удовлетворительный» на каждую пустую дату",
-        },
-        {
-                Label:       "Неудовлетворительный",
-                Diligences:  []string{"Неудовлетворительно"},
-                Description: "Ставит «Неудовлетворительно» на все пустые даты до сегодняшнего дня",
-        },
+	{
+		Label:       "Отлично",
+		Diligences:  []string{"Отличный"},
+		Description: "Ставит «Отличный» на все пустые даты до сегодняшнего дня",
+	},
+	{
+		Label:       "Отлично && Хорошо",
+		Diligences:  []string{"Отличный", "Хорошо"},
+		Description: "Рандом: «Отличный» или «Хорошо» на каждую пустую дату",
+	},
+	{
+		Label:       "Хорошо && Удовлетворительный",
+		Diligences:  []string{"Хорошо", "Удовлетворительный"},
+		Description: "Рандом: «Хорошо» или «Удовлетворительный» на каждую пустую дату",
+	},
+	{
+		Label:       "Неудовлетворительный",
+		Diligences:  []string{"Неудовлетворительно"},
+		Description: "Ставит «Неудовлетворительно» на все пустые даты до сегодняшнего дня",
+	},
 }
 
 // ------------------------------------------
@@ -56,279 +56,169 @@ var DiligenceCombos = []DiligenceCombo{
 // DiariesTab manages the Diaries (Дневник) tab.
 //
 // Simplified workflow:
-//  1. Select student from the list
-//  2. Press one of the diligence buttons:
+//  1. Groups, students, and behavior options are loaded automatically
+//  2. User selects a student from the list
+//  3. User presses one of the diligence buttons:
 //     [Отлично] [Отлично && Хорошо] [Хорошо && Удовлетворительный] [Неудовлетворительный]
-//  3. System fills random diligence marks + behavior comments on all empty
-//     diary dates up to the current date for the selected student.
+//  4. System signs diary entries with the appropriate behavior for all weeks
+//     up to the current date.
+//
+// No manual class/subject/quarter selection — everything is auto-detected.
+// Only the class teacher (классный руководитель) has the right to sign.
 type DiariesTab struct {
-        controller Controller
-        container  *fyne.Container
+	controller Controller
+	container  *fyne.Container
 
-        // Filters
-        classSel   *widget.Select
-        subjectSel *widget.Select
-        quarterSel *widget.Select
+	// State
+	groups          []client.MyClassGroup
+	students        []client.MyClassStudent
+	behaviorOptions []client.DiaryBehaviorOption
+	selectedGroup   *client.MyClassGroup
 
-        // State
-        journalOpts     *client.JournalOptions
-        selectedGroup   *client.JournalGroup
-        selectedSubject *client.Subject
-        selectedQuarter *client.Quarter
-        students        []client.Student
-        dates           []client.Day
-
-        // UI
-        selectedStudentIdx int // -1 = none selected
-        studentsList       *widget.List
-        statusLabel        *widget.Label
-        diligenceButtons   []*widget.Button
+	// UI
+	selectedStudentIdx int // -1 = none selected
+	studentsList       *widget.List
+	statusLabel        *widget.Label
+	diligenceButtons   []*widget.Button
+	refreshBtn         *widget.Button
 }
 
 // NewDiariesTab creates a new DiariesTab.
 func NewDiariesTab(c Controller) *DiariesTab {
-        dt := &DiariesTab{
-                controller:        c,
-                statusLabel:       widget.NewLabel("Выберите класс, предмет и четверть"),
-                selectedStudentIdx: -1,
-        }
-        dt.buildUI()
-        go dt.loadJournalOptions()
-        return dt
+	dt := &DiariesTab{
+		controller:        c,
+		statusLabel:       widget.NewLabel("Загрузка..."),
+		selectedStudentIdx: -1,
+	}
+	dt.buildUI()
+	go dt.loadInitialData()
+	return dt
 }
 
 // Container returns the root container for this tab.
 func (dt *DiariesTab) Container() fyne.CanvasObject {
-        return dt.container
+	return dt.container
 }
 
 // buildUI creates the full UI layout for the diaries tab.
 func (dt *DiariesTab) buildUI() {
-        dt.classSel = widget.NewSelect([]string{}, dt.onClassSelected)
-        dt.classSel.PlaceHolder = "Класс..."
+	// Diligence action buttons — disabled until a student is selected
+	dt.diligenceButtons = make([]*widget.Button, len(DiligenceCombos))
+	btnColors := []color.Color{
+		color.NRGBA{R: 22, G: 163, B: 74, A: 255},  // green — Отлично
+		color.NRGBA{R: 37, G: 99, B: 235, A: 255},   // blue — Отлично && Хорошо
+		color.NRGBA{R: 217, G: 119, B: 6, A: 255},    // orange — Хорошо && Удовл.
+		color.NRGBA{R: 220, G: 38, B: 38, A: 255},    // red — Неудовлетворительный
+	}
 
-        dt.subjectSel = widget.NewSelect([]string{}, dt.onSubjectSelected)
-        dt.subjectSel.PlaceHolder = "Предмет..."
+	for i, combo := range DiligenceCombos {
+		idx := i // capture for closure
+		btn := widget.NewButton(combo.Label, func() {
+			dt.onDiligenceButton(idx)
+		})
+		if i == 0 {
+			btn.Importance = widget.HighImportance
+		}
+		btn.Disable()
+		dt.diligenceButtons[i] = btn
+		_ = btnColors[i] // color applied via Importance for now
+	}
 
-        dt.quarterSel = widget.NewSelect([]string{}, dt.onQuarterSelected)
-        dt.quarterSel.PlaceHolder = "Четверть..."
+	actionRow := container.NewHBox()
+	for i := range dt.diligenceButtons {
+		actionRow.Add(dt.diligenceButtons[i])
+	}
 
-        refreshBtn := widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() {
-                go dt.loadData()
-        })
+	dt.refreshBtn = widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() {
+		go dt.loadInitialData()
+	})
 
-        filterRow := container.NewHBox(
-                widget.NewLabel("Фильтры:"),
-                dt.classSel,
-                dt.subjectSel,
-                dt.quarterSel,
-                refreshBtn,
-        )
+	headerRow := container.NewHBox(
+		widget.NewLabelWithStyle("Дневник", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		dt.refreshBtn,
+	)
 
-        // Diligence action buttons — disabled until a student is selected
-        dt.diligenceButtons = make([]*widget.Button, len(DiligenceCombos))
-        btnColors := []color.Color{
-                color.NRGBA{R: 22, G: 163, B: 74, A: 255},  // green — Отлично
-                color.NRGBA{R: 37, G: 99, B: 235, A: 255},   // blue — Отлично && Хорошо
-                color.NRGBA{R: 217, G: 119, B: 6, A: 255},    // orange — Хорошо && Удовл.
-                color.NRGBA{R: 220, G: 38, B: 38, A: 255},    // red — Неудовлетворительный
-        }
+	placeholder := widget.NewLabelWithStyle(
+		"Выберите ученика и нажмите кнопку прилежания:\n"+
+			"«Отлично», «Отлично && Хорошо» и т.д.\n\n"+
+			"Система автоматически заполнит дневник до текущей даты.",
+		fyne.TextAlignCenter,
+		fyne.TextStyle{Italic: true},
+	)
 
-        for i, combo := range DiligenceCombos {
-                idx := i // capture for closure
-                btn := widget.NewButton(combo.Label, func() {
-                        dt.onDiligenceButton(idx)
-                })
-                if i == 0 {
-                        btn.Importance = widget.HighImportance
-                }
-                btn.Disable()
-                dt.diligenceButtons[i] = btn
-                _ = btnColors[i] // color applied via Importance for now
-        }
-
-        actionRow := container.NewHBox()
-        for i := range dt.diligenceButtons {
-                actionRow.Add(dt.diligenceButtons[i])
-        }
-
-        placeholder := widget.NewLabelWithStyle(
-                "Выберите класс, предмет и четверть\n\n"+
-                        "Затем выберите ученика и нажмите кнопку прилежания:\n"+
-                        "«Отлично», «Отлично && Хорошо» и т.д.\n\n"+
-                        "Система автоматически заполнит дневник до текущей даты.",
-                fyne.TextAlignCenter,
-                fyne.TextStyle{Italic: true},
-        )
-
-        dt.container = container.NewBorder(
-                container.NewVBox(filterRow, actionRow, widget.NewSeparator()),
-                dt.statusLabel,
-                nil,
-                nil,
-                placeholder,
-        )
+	dt.container = container.NewBorder(
+		container.NewVBox(headerRow, actionRow, widget.NewSeparator()),
+		dt.statusLabel,
+		nil,
+		nil,
+		placeholder,
+	)
 }
 
 // ------------------------------------------
 // DATA LOADING
 // ------------------------------------------
 
-func (dt *DiariesTab) loadJournalOptions() {
-        dt.statusLabel.SetText("Загрузка списка классов...")
-        opts, err := dt.controller.GetClient().GetJournalOptions()
-        if err != nil {
-                fyne.Do(func() {
-                        dt.statusLabel.SetText(fmt.Sprintf("Ошибка загрузки: %v", err))
-                })
-                return
-        }
+// loadInitialData loads groups, students, and behavior options automatically.
+func (dt *DiariesTab) loadInitialData() {
+	fyne.Do(func() {
+		dt.statusLabel.SetText("Загрузка данных дневника...")
+		dt.setDiligenceButtonsEnabled(false)
+	})
 
-        dt.journalOpts = opts
+	apiClient := dt.controller.GetClient()
 
-        classNames := make([]string, len(opts.Groups))
-        for i, g := range opts.Groups {
-                classNames[i] = fmt.Sprintf("%d %s", g.Number, g.Name)
-        }
+	// 1. Load groups
+	groups, errG := apiClient.GetMyClassGroups()
+	if errG != nil {
+		fyne.Do(func() {
+			dt.statusLabel.SetText(fmt.Sprintf("Ошибка загрузки классов: %v", errG))
+		})
+		return
+	}
 
-        fyne.Do(func() {
-                dt.classSel.Options = classNames
-                dt.classSel.Refresh()
-                dt.statusLabel.SetText("Выберите класс, предмет и четверть")
-                if len(classNames) > 0 {
-                        dt.classSel.SetSelectedIndex(0)
-                }
-        })
-}
+	if len(groups) == 0 {
+		fyne.Do(func() {
+			dt.statusLabel.SetText("Нет доступных классов")
+		})
+		return
+	}
 
-// ------------------------------------------
-// FILTER HANDLERS
-// ------------------------------------------
+	dt.groups = groups
 
-func (dt *DiariesTab) onClassSelected(selected string) {
-        if dt.journalOpts == nil {
-                return
-        }
+	// 2. Auto-select the first group
+	dt.selectedGroup = &groups[0]
 
-        for i, g := range dt.journalOpts.Groups {
-                if fmt.Sprintf("%d %s", g.Number, g.Name) == selected {
-                        dt.selectedGroup = &dt.journalOpts.Groups[i]
-                        break
-                }
-        }
-        if dt.selectedGroup == nil {
-                return
-        }
+	// 3. Load students for the selected group
+	students, errS := apiClient.GetMyClassStudents(dt.selectedGroup.ID)
+	if errS != nil {
+		fyne.Do(func() {
+			dt.statusLabel.SetText(fmt.Sprintf("Ошибка загрузки учеников: %v", errS))
+		})
+		return
+	}
 
-        dt.selectedSubject = nil
-        dt.selectedQuarter = nil
-        dt.students = nil
-        dt.dates = nil
-        dt.selectedStudentIdx = -1
-        dt.setDiligenceButtonsEnabled(false)
+	dt.students = students
 
-        subjectNames := make([]string, len(dt.selectedGroup.Subjects))
-        for i, s := range dt.selectedGroup.Subjects {
-                subjectNames[i] = s.SubjectName
-        }
+	// 4. Load behavior options (parallel with students — but we need them both)
+	behaviorOpts, errB := apiClient.GetDiaryBehaviorOptions()
+	if errB != nil {
+		fyne.Do(func() {
+			dt.statusLabel.SetText(fmt.Sprintf("Ошибка загрузки вариантов поведения: %v", errB))
+		})
+		return
+	}
 
-        quarterNames := make([]string, len(dt.selectedGroup.Quarters))
-        for i, q := range dt.selectedGroup.Quarters {
-                quarterNames[i] = q.Name
-        }
+	dt.behaviorOptions = behaviorOpts
 
-        fyne.Do(func() {
-                dt.subjectSel.Options = subjectNames
-                dt.subjectSel.Refresh()
-                dt.quarterSel.Options = quarterNames
-                dt.quarterSel.Refresh()
-
-                if len(subjectNames) > 0 {
-                        dt.subjectSel.SetSelectedIndex(0)
-                }
-                for i, q := range dt.selectedGroup.Quarters {
-                        if q.CurrentQuarter {
-                                dt.quarterSel.SetSelectedIndex(i)
-                                break
-                        }
-                }
-        })
-}
-
-func (dt *DiariesTab) onSubjectSelected(selected string) {
-        if dt.selectedGroup == nil {
-                return
-        }
-        for i, s := range dt.selectedGroup.Subjects {
-                if s.SubjectName == selected {
-                        dt.selectedSubject = &dt.selectedGroup.Subjects[i]
-                        break
-                }
-        }
-        dt.tryLoadData()
-}
-
-func (dt *DiariesTab) onQuarterSelected(selected string) {
-        if dt.selectedGroup == nil {
-                return
-        }
-        for i, q := range dt.selectedGroup.Quarters {
-                if q.Name == selected {
-                        dt.selectedQuarter = &dt.selectedGroup.Quarters[i]
-                        break
-                }
-        }
-        dt.tryLoadData()
-}
-
-func (dt *DiariesTab) tryLoadData() {
-        if dt.selectedGroup != nil && dt.selectedSubject != nil && dt.selectedQuarter != nil {
-                go dt.loadData()
-        }
-}
-
-func (dt *DiariesTab) loadData() {
-        if dt.selectedGroup == nil || dt.selectedSubject == nil || dt.selectedQuarter == nil {
-                return
-        }
-
-        fyne.Do(func() {
-                dt.statusLabel.SetText("Загрузка данных дневника...")
-        })
-
-        apiClient := dt.controller.GetClient()
-        gID := dt.selectedGroup.ID
-        sID := dt.selectedSubject.SubjectID
-        qID := dt.selectedQuarter.ID
-
-        students, errS := apiClient.GetJournalStudents(gID, sID, qID)
-        dates, errD := apiClient.GetJournalDates(gID, sID, qID)
-
-        fyne.Do(func() {
-                if errS != nil {
-                        dt.statusLabel.SetText(fmt.Sprintf("Ошибка: %v", errS))
-                        dialog.ShowError(fmt.Errorf("Ошибка загрузки: %v", errS), dt.controller.GetWindow())
-                        return
-                }
-                if errD != nil {
-                        dt.statusLabel.SetText(fmt.Sprintf("Ошибка: %v", errD))
-                        dialog.ShowError(fmt.Errorf("Ошибка дат: %v", errD), dt.controller.GetWindow())
-                        return
-                }
-
-                dt.students = students
-                dt.dates = dates
-                dt.selectedStudentIdx = -1
-                dt.setDiligenceButtonsEnabled(false)
-
-                if len(students) == 0 {
-                        dt.statusLabel.SetText("Нет учеников")
-                } else {
-                        dt.statusLabel.SetText(fmt.Sprintf("Загружено: %d учеников, %d дат. Выберите ученика.", len(students), len(dates)))
-                }
-
-                dt.rebuildStudentsList()
-        })
+	fyne.Do(func() {
+		if len(students) == 0 {
+			dt.statusLabel.SetText(fmt.Sprintf("Класс «%s» — нет учеников", dt.selectedGroup.Name))
+			return
+		}
+		dt.statusLabel.SetText(fmt.Sprintf("Класс «%s» — %d учеников. Выберите ученика.", dt.selectedGroup.Name, len(students)))
+		dt.rebuildStudentsList()
+	})
 }
 
 // ------------------------------------------
@@ -336,267 +226,432 @@ func (dt *DiariesTab) loadData() {
 // ------------------------------------------
 
 func (dt *DiariesTab) rebuildStudentsList() {
-        if len(dt.students) == 0 {
-                dt.container.Objects = []fyne.CanvasObject{
-                        container.NewBorder(
-                                dt.buildTopBar(),
-                                dt.statusLabel,
-                                nil, nil,
-                                widget.NewLabelWithStyle("Нет учеников", fyne.TextAlignCenter, fyne.TextStyle{Italic: true}),
-                        ),
-                }
-                dt.container.Refresh()
-                return
-        }
+	if len(dt.students) == 0 {
+		dt.container.Objects = []fyne.CanvasObject{
+			container.NewBorder(
+				dt.buildTopBar(),
+				dt.statusLabel,
+				nil, nil,
+				widget.NewLabelWithStyle("Нет учеников", fyne.TextAlignCenter, fyne.TextStyle{Italic: true}),
+			),
+		}
+		dt.container.Refresh()
+		return
+	}
 
-        dt.studentsList = widget.NewList(
-                func() int { return len(dt.students) },
-                func() fyne.CanvasObject {
-                        numLabel := widget.NewLabel("")
-                        numLabel.TextStyle = fyne.TextStyle{Bold: true}
-                        nameLabel := widget.NewLabel("")
-                        nameLabel.TextStyle = fyne.TextStyle{Bold: true}
-                        avgLabel := widget.NewLabel("")
-                        marksLabel := widget.NewLabel("")
-                        statusIcon := canvas.NewText("", color.NRGBA{R: 22, G: 163, B: 74, A: 255})
-                        statusIcon.TextSize = 14
-                        statusIcon.TextStyle = fyne.TextStyle{Bold: true}
+	dt.studentsList = widget.NewList(
+		func() int { return len(dt.students) },
+		func() fyne.CanvasObject {
+			numLabel := widget.NewLabel("")
+			numLabel.TextStyle = fyne.TextStyle{Bold: true}
+			nameLabel := widget.NewLabel("")
+			nameLabel.TextStyle = fyne.TextStyle{Bold: true}
+			groupLabel := widget.NewLabel("")
+			groupLabel.TextStyle = fyne.TextStyle{Italic: true}
+			statusIcon := canvas.NewText("", color.NRGBA{R: 22, G: 163, B: 74, A: 255})
+			statusIcon.TextSize = 14
+			statusIcon.TextStyle = fyne.TextStyle{Bold: true}
 
-                        return container.NewBorder(nil, nil,
-                                container.NewHBox(numLabel, nameLabel),
-                                statusIcon,
-                                container.NewVBox(avgLabel, marksLabel),
-                        )
-                },
-                func(id widget.ListItemID, cell fyne.CanvasObject) {
-                        if id < 0 || id >= len(dt.students) {
-                                return
-                        }
-                        student := dt.students[id]
+			return container.NewBorder(nil, nil,
+				container.NewHBox(numLabel, nameLabel),
+				statusIcon,
+				groupLabel,
+			)
+		},
+		func(id widget.ListItemID, cell fyne.CanvasObject) {
+			if id < 0 || id >= len(dt.students) {
+				return
+			}
+			student := dt.students[id]
 
-                        border := cell.(*fyne.Container)
-                        leftBox := border.Objects[0].(*fyne.Container)
-                        rightBox := border.Objects[1].(*fyne.Container)
-                        statusIcon := border.Objects[2].(*canvas.Text)
+			border := cell.(*fyne.Container)
+			leftBox := border.Objects[0].(*fyne.Container)
+			statusIcon := border.Objects[1].(*canvas.Text)
+			groupLabel := border.Objects[2].(*widget.Label)
 
-                        numLabel := leftBox.Objects[0].(*widget.Label)
-                        nameLabel := leftBox.Objects[1].(*widget.Label)
-                        avgLabel := rightBox.Objects[0].(*widget.Label)
-                        marksLabel := rightBox.Objects[1].(*widget.Label)
+			numLabel := leftBox.Objects[0].(*widget.Label)
+			nameLabel := leftBox.Objects[1].(*widget.Label)
 
-                        numLabel.SetText(fmt.Sprintf("%d.", id+1))
-                        nameLabel.SetText(fmt.Sprintf("%s %s", student.LastName, student.FirstName))
+			numLabel.SetText(fmt.Sprintf("%d.", id+1))
+			nameLabel.SetText(fmt.Sprintf("%s %s", student.LastName, student.FirstName))
+			groupLabel.SetText(student.GroupName)
 
-                        if student.AverageScore != "" && student.AverageScore != "0.0" {
-                                avgLabel.SetText(fmt.Sprintf("Ср: %s", student.AverageScore))
-                        } else {
-                                avgLabel.SetText("")
-                        }
+			// Show selected indicator
+			if id == dt.selectedStudentIdx {
+				statusIcon.Text = "▶"
+				statusIcon.Color = color.NRGBA{R: 56, G: 189, B: 248, A: 255}
+			} else {
+				statusIcon.Text = ""
+			}
+			statusIcon.Refresh()
+		},
+	)
 
-                        markCount := 0
-                        for _, sm := range student.SubjectMarks {
-                                if sm.ShortName != "" && sm.ShortName != "—" {
-                                        markCount++
-                                }
-                        }
-                        marksLabel.SetText(fmt.Sprintf("Оценок: %d/%d", markCount, len(dt.dates)))
+	dt.studentsList.OnSelected = func(id widget.ListItemID) {
+		dt.studentsList.Unselect(id)
+		dt.selectedStudentIdx = id
+		dt.setDiligenceButtonsEnabled(true)
+		dt.studentsList.Refresh()
+		student := dt.students[id]
+		dt.statusLabel.SetText(fmt.Sprintf("Выбран: %s %s — нажмите кнопку прилежания", student.LastName, student.FirstName))
+	}
 
-                        // Show selected indicator
-                        if id == dt.selectedStudentIdx {
-                                statusIcon.Text = "▶"
-                                statusIcon.Color = color.NRGBA{R: 56, G: 189, B: 248, A: 255}
-                        } else {
-                                statusIcon.Text = ""
-                        }
-                        statusIcon.Refresh()
-                },
-        )
-
-        dt.studentsList.OnSelected = func(id widget.ListItemID) {
-                dt.studentsList.Unselect(id)
-                dt.selectedStudentIdx = id
-                dt.setDiligenceButtonsEnabled(true)
-                dt.studentsList.Refresh()
-                student := dt.students[id]
-                dt.statusLabel.SetText(fmt.Sprintf("Выбран: %s %s — нажмите кнопку прилежания", student.LastName, student.FirstName))
-        }
-
-        dt.container.Objects = []fyne.CanvasObject{
-                container.NewBorder(
-                        dt.buildTopBar(),
-                        dt.statusLabel,
-                        nil, nil,
-                        dt.studentsList,
-                ),
-        }
-        dt.container.Refresh()
+	dt.container.Objects = []fyne.CanvasObject{
+		container.NewBorder(
+			dt.buildTopBar(),
+			dt.statusLabel,
+			nil, nil,
+			dt.studentsList,
+		),
+	}
+	dt.container.Refresh()
 }
 
 func (dt *DiariesTab) buildTopBar() *fyne.Container {
-        filterRow := container.NewHBox(
-                widget.NewLabel("Фильтры:"), dt.classSel, dt.subjectSel, dt.quarterSel,
-                widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() { go dt.loadData() }),
-        )
-        actionRow := container.NewHBox()
-        for _, btn := range dt.diligenceButtons {
-                actionRow.Add(btn)
-        }
-        return container.NewVBox(filterRow, actionRow, widget.NewSeparator())
+	headerRow := container.NewHBox(
+		widget.NewLabelWithStyle("Дневник", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		dt.refreshBtn,
+	)
+	if dt.selectedGroup != nil {
+		headerRow.Objects = append(headerRow.Objects,
+			widget.NewLabel(fmt.Sprintf("— %s", dt.selectedGroup.Name)),
+		)
+	}
+	actionRow := container.NewHBox()
+	for _, btn := range dt.diligenceButtons {
+		actionRow.Add(btn)
+	}
+	return container.NewVBox(headerRow, actionRow, widget.NewSeparator())
 }
 
 func (dt *DiariesTab) setDiligenceButtonsEnabled(enabled bool) {
-        for _, btn := range dt.diligenceButtons {
-                if enabled {
-                        btn.Enable()
-                } else {
-                        btn.Disable()
-                }
-        }
+	for _, btn := range dt.diligenceButtons {
+		if enabled {
+			btn.Enable()
+		} else {
+			btn.Disable()
+		}
+	}
 }
 
 // ------------------------------------------
 // DILIGENCE BUTTON HANDLER
 // ------------------------------------------
 
+// findBehaviorID finds the behavior option ID matching a diligence name.
+func (dt *DiariesTab) findBehaviorID(diligence string) int {
+	for _, opt := range dt.behaviorOptions {
+		if opt.Title == diligence {
+			return opt.ID
+		}
+	}
+	return 0
+}
+
 func (dt *DiariesTab) onDiligenceButton(comboIdx int) {
-        if dt.selectedStudentIdx < 0 || dt.selectedStudentIdx >= len(dt.students) {
-                dialog.ShowInformation("Внимание", "Сначала выберите ученика из списка", dt.controller.GetWindow())
-                return
-        }
-        if dt.selectedQuarter == nil || len(dt.dates) == 0 {
-                dialog.ShowInformation("Внимание", "Нет дат для заполнения", dt.controller.GetWindow())
-                return
-        }
+	if dt.selectedStudentIdx < 0 || dt.selectedStudentIdx >= len(dt.students) {
+		dialog.ShowInformation("Внимание", "Сначала выберите ученика из списка", dt.controller.GetWindow())
+		return
+	}
+	if dt.selectedGroup == nil {
+		dialog.ShowInformation("Внимание", "Данные не загружены", dt.controller.GetWindow())
+		return
+	}
 
-        combo := DiligenceCombos[comboIdx]
-        student := dt.students[dt.selectedStudentIdx]
+	combo := DiligenceCombos[comboIdx]
+	student := dt.students[dt.selectedStudentIdx]
 
-        // Count empty dates up to today
-        today := time.Now().Format("2006-01-02")
-        emptyCount := 0
-        for _, date := range dt.dates {
-                if date.AssignmentDate > today {
-                        continue // skip future dates
-                }
-                hasMark := false
-                for _, sm := range student.SubjectMarks {
-                        if sm.AssignmentDateID == date.AssignmentDateID && sm.ShortName != "" && sm.ShortName != "—" {
-                                hasMark = true
-                                break
-                        }
-                }
-                if !hasMark {
-                        emptyCount++
-                }
-        }
+	confirmMsg := fmt.Sprintf(
+		"Ученик: %s %s\n"+
+			"Действие: %s\n"+
+			"Описание: %s\n\n"+
+			"Будут подписаны все недели до текущей даты.\n"+
+			"Продолжить?",
+		student.LastName, student.FirstName,
+		combo.Label, combo.Description,
+	)
 
-        if emptyCount == 0 {
-                dialog.ShowInformation("Готово", fmt.Sprintf("У %s %s нет пустых дат до сегодняшнего дня", student.LastName, student.FirstName), dt.controller.GetWindow())
-                return
-        }
-
-        confirmMsg := fmt.Sprintf(
-                "Ученик: %s %s\n"+
-                        "Действие: %s\n"+
-                        "Описание: %s\n\n"+
-                        "Пустых дат до сегодняшнего дня: %d\n\n"+
-                        "Будут выставлены оценки прилежания и комментарии.\n"+
-                        "Продолжить?",
-                student.LastName, student.FirstName,
-                combo.Label, combo.Description, emptyCount,
-        )
-
-        dialog.ShowConfirm("Заполнить дневник", confirmMsg, func(ok bool) {
-                if !ok {
-                        return
-                }
-                go dt.executeDiligenceFill(dt.selectedStudentIdx, comboIdx)
-        }, dt.controller.GetWindow())
+	dialog.ShowConfirm("Заполнить дневник", confirmMsg, func(ok bool) {
+		if !ok {
+			return
+		}
+		go dt.executeDiligenceFill(dt.selectedStudentIdx, comboIdx)
+	}, dt.controller.GetWindow())
 }
 
-// executeDiligenceFill fills diary diligence marks + behavior comments
-// for the selected student on all empty dates up to today.
+// executeDiligenceFill signs the diary for the selected student with the appropriate
+// behavior for all weeks up to the current date.
+//
+// Strategy:
+// - For single-behavior combos (Отлично, Неудовлетворительный):
+//   Sign each week (Monday-Saturday) from the quarter start to today.
+//
+// - For mixed-behavior combos (Отлично && Хорошо, Хорошо && Удовлетворительный):
+//   Sign each day individually with a random behavior from the pool.
 func (dt *DiariesTab) executeDiligenceFill(studentIdx, comboIdx int) {
-        if studentIdx < 0 || studentIdx >= len(dt.students) {
-                return
-        }
+	if studentIdx < 0 || studentIdx >= len(dt.students) {
+		return
+	}
 
-        student := dt.students[studentIdx]
-        combo := DiligenceCombos[comboIdx]
-        apiClient := dt.controller.GetClient()
-        qID := dt.selectedQuarter.ID
-        today := time.Now().Format("2006-01-02")
+	student := dt.students[studentIdx]
+	combo := DiligenceCombos[comboIdx]
+	apiClient := dt.controller.GetClient()
+	today := time.Now()
 
-        successCount := 0
-        skipCount := 0
+	// Resolve behavior IDs for each diligence in the combo
+	behaviorIDs := make([]int, len(combo.Diligences))
+	for i, dil := range combo.Diligences {
+		behaviorIDs[i] = dt.findBehaviorID(dil)
+	}
 
-        for _, date := range dt.dates {
-                // Only fill dates up to today
-                if date.AssignmentDate > today {
-                        continue
-                }
+	// Check if any behavior IDs are missing
+	hasBehaviorID := false
+	for _, id := range behaviorIDs {
+		if id > 0 {
+			hasBehaviorID = true
+			break
+		}
+	}
 
-                // Skip dates that already have a mark
-                hasMark := false
-                for _, sm := range student.SubjectMarks {
-                        if sm.AssignmentDateID == date.AssignmentDateID && sm.ShortName != "" && sm.ShortName != "—" {
-                                hasMark = true
-                                break
-                        }
-                }
-                if hasMark {
-                        skipCount++
-                        continue
-                }
+	// If we couldn't get behavior IDs from the API, fall back to the old
+	// CreateDiaryComment method (which uses /journal/comment)
+	if !hasBehaviorID {
+		dt.executeDiligenceFillLegacy(studentIdx, comboIdx)
+		return
+	}
 
-                // Pick random diligence from the combo pool
-                diligence := combo.Diligences[RandomGradeInRange(0, len(combo.Diligences)-1)]
+	successCount := 0
+	failCount := 0
 
-                // Generate a matching behavior comment
-                var comment string
-                switch diligence {
-                case "Отличный":
-                        comment = SequentialBehaviorComment(BehaviorPraise, successCount)
-                case "Хорошо":
-                        comment = SequentialBehaviorComment(BehaviorNeutral, successCount)
-                case "Удовлетворительный":
-                        comment = SequentialBehaviorComment(BehaviorMixed, successCount)
-                case "Неудовлетворительно":
-                        comment = SequentialBehaviorComment(BehaviorComplaint, successCount)
-                default:
-                        comment = "Комментарий учителя"
-                }
+	if len(combo.Diligences) == 1 {
+		// Single behavior: sign week by week
+		dt.signWeeks(apiClient, student.ID, behaviorIDs[0], today, &successCount, &failCount)
+	} else {
+		// Mixed behavior: sign day by day with random behavior from pool
+		dt.signDays(apiClient, student.ID, behaviorIDs, today, &successCount, &failCount)
+	}
 
-                fyne.Do(func() {
-                        dt.statusLabel.SetText(fmt.Sprintf("Ставлю «%s»: %s %s — %s (%d/%d)",
-                                diligence, student.LastName, student.FirstName, date.AssignmentDate[5:],
-                                successCount+1, len(dt.dates)-skipCount))
-                })
-
-                err := apiClient.CreateDiaryComment(student.StudentID, date.AssignmentDateID, qID, comment)
-                if err == nil {
-                        successCount++
-                }
-        }
-
-        fyne.Do(func() {
-                dt.statusLabel.SetText(fmt.Sprintf("Готово: %d записей для %s %s (пропущено: %d)",
-                        successCount, student.LastName, student.FirstName, skipCount))
-        })
+	fyne.Do(func() {
+		dt.statusLabel.SetText(fmt.Sprintf("Готово: %d подписей для %s %s (ошибок: %d)",
+			successCount, student.LastName, student.FirstName, failCount))
+	})
 }
 
-// Refresh updates the tab with new data from the dashboard context.
-func (dt *DiariesTab) Refresh(students []client.Student, group *client.JournalGroup, subject *client.Subject, quarter *client.Quarter) {
-        if group != nil && (dt.selectedGroup == nil || dt.selectedGroup.ID != group.ID) {
-                dt.selectedGroup = group
-        }
-        if subject != nil {
-                dt.selectedSubject = subject
-        }
-        if quarter != nil {
-                dt.selectedQuarter = quarter
-        }
-        if dt.selectedGroup != nil && dt.selectedSubject != nil && dt.selectedQuarter != nil {
-                go dt.loadData()
-        }
+// signWeeks signs diary weeks from the quarter start to today with a single behavior.
+func (dt *DiariesTab) signWeeks(apiClient *client.EdonishClient, studentID, behaviorID int, today time.Time, successCount, failCount *int) {
+	// Calculate weeks from September 1 of the current school year to today
+	startDate := dt.getSchoolYearStart(today)
+	weekStart := startDate
+
+	for !weekStart.After(today) {
+		// Week: Monday to Saturday (6 days)
+		weekEnd := weekStart.AddDate(0, 0, 5) // Saturday
+		if weekEnd.After(today) {
+			weekEnd = today
+		}
+
+		fyne.Do(func() {
+			dt.statusLabel.SetText(fmt.Sprintf("Подписываю неделю %s ... %s (%d)",
+				weekStart.Format("02.01"), weekEnd.Format("02.01"), *successCount+1))
+		})
+
+		err := apiClient.SignDiary(studentID, behaviorID,
+			weekStart.Format("2006-01-02"),
+			weekEnd.Format("2006-01-02"),
+		)
+		if err != nil {
+			*failCount++
+		} else {
+			*successCount++
+		}
+
+		// Move to next week
+		weekStart = weekStart.AddDate(0, 0, 7)
+	}
+}
+
+// signDays signs diary entries day by day with random behaviors from the pool.
+func (dt *DiariesTab) signDays(apiClient *client.EdonishClient, studentID int, behaviorIDs []int, today time.Time, successCount, failCount *int) {
+	startDate := dt.getSchoolYearStart(today)
+	current := startDate
+
+	for !current.After(today) {
+		// Skip Sundays
+		if current.Weekday() == time.Sunday {
+			current = current.AddDate(0, 0, 1)
+			continue
+		}
+
+		// Pick a random behavior ID from the pool
+		idx := RandomGradeInRange(0, len(behaviorIDs)-1)
+		chosenID := behaviorIDs[idx]
+
+		fyne.Do(func() {
+			dt.statusLabel.SetText(fmt.Sprintf("Подписываю %s (%d)",
+				current.Format("02.01"), *successCount+1))
+		})
+
+		dateStr := current.Format("2006-01-02")
+		err := apiClient.SignDiary(studentID, chosenID, dateStr, dateStr)
+		if err != nil {
+			*failCount++
+		} else {
+			*successCount++
+		}
+
+		current = current.AddDate(0, 0, 1)
+	}
+}
+
+// getSchoolYearStart returns September 1 of the current school year.
+// In Tajikistan, the school year starts on September 1.
+func (dt *DiariesTab) getSchoolYearStart(today time.Time) time.Time {
+	year := today.Year()
+	// If we're before September, the school year started last year
+	if today.Month() < time.September {
+		year--
+	}
+	return time.Date(year, time.September, 1, 0, 0, 0, 0, today.Location())
+}
+
+// ------------------------------------------
+// LEGACY FALLBACK (uses /journal/comment)
+// ------------------------------------------
+
+// executeDiligenceFillLegacy uses the old /journal/comment API as fallback
+// when behavior IDs are not available from the /myclass API.
+func (dt *DiariesTab) executeDiligenceFillLegacy(studentIdx, comboIdx int) {
+	// This fallback uses the Journal API which requires group/subject/quarter
+	// We need to load journal options first
+	apiClient := dt.controller.GetClient()
+
+	opts, err := apiClient.GetJournalOptions()
+	if err != nil {
+		fyne.Do(func() {
+			dt.statusLabel.SetText(fmt.Sprintf("Ошибка (legacy): %v", err))
+		})
+		return
+	}
+
+	if len(opts.Groups) == 0 {
+		fyne.Do(func() {
+			dt.statusLabel.SetText("Нет классов для заполнения")
+		})
+		return
+	}
+
+	// Use the first group
+	group := opts.Groups[0]
+	if len(group.Subjects) == 0 || len(group.Quarters) == 0 {
+		fyne.Do(func() {
+			dt.statusLabel.SetText("Нет предметов или четвертей")
+		})
+		return
+	}
+
+	subject := group.Subjects[0]
+	// Find current quarter
+	var quarter *client.Quarter
+	for i := range group.Quarters {
+		if group.Quarters[i].CurrentQuarter {
+			quarter = &group.Quarters[i]
+			break
+		}
+	}
+	if quarter == nil {
+		q := group.Quarters[0]
+		quarter = &q
+	}
+
+	student := dt.students[studentIdx]
+	combo := DiligenceCombos[comboIdx]
+	qID := quarter.ID
+
+	// Load dates and journal students
+	journalStudents, errS := apiClient.GetJournalStudents(group.ID, subject.SubjectID, qID)
+	dates, errD := apiClient.GetJournalDates(group.ID, subject.SubjectID, qID)
+
+	if errS != nil || errD != nil {
+		fyne.Do(func() {
+			dt.statusLabel.SetText(fmt.Sprintf("Ошибка загрузки: %v / %v", errS, errD))
+		})
+		return
+	}
+
+	// Find the student in journal students by matching student ID
+	var journalStudent *client.Student
+	for i := range journalStudents {
+		if journalStudents[i].StudentID == student.ID {
+			journalStudent = &journalStudents[i]
+			break
+		}
+	}
+
+	if journalStudent == nil && len(journalStudents) > 0 {
+		// Fallback: use student index
+		if studentIdx < len(journalStudents) {
+			journalStudent = &journalStudents[studentIdx]
+		}
+	}
+
+	today := time.Now().Format("2006-01-02")
+	successCount := 0
+
+	for _, date := range dates {
+		if date.AssignmentDate > today {
+			continue
+		}
+
+		// Check if already has a mark/comment
+		if journalStudent != nil {
+			hasMark := false
+			for _, sm := range journalStudent.SubjectMarks {
+				if sm.AssignmentDateID == date.AssignmentDateID && sm.ShortName != "" && sm.ShortName != "—" {
+					hasMark = true
+					break
+				}
+			}
+			if hasMark {
+				continue
+			}
+		}
+
+		// Pick random diligence
+		diligence := combo.Diligences[RandomGradeInRange(0, len(combo.Diligences)-1)]
+
+		// Generate behavior comment
+		var comment string
+		switch diligence {
+		case "Отличный":
+			comment = SequentialBehaviorComment(BehaviorPraise, successCount)
+		case "Хорошо":
+			comment = SequentialBehaviorComment(BehaviorNeutral, successCount)
+		case "Удовлетворительный":
+			comment = SequentialBehaviorComment(BehaviorMixed, successCount)
+		case "Неудовлетворительно":
+			comment = SequentialBehaviorComment(BehaviorComplaint, successCount)
+		default:
+			comment = "Комментарий учителя"
+		}
+
+		fyne.Do(func() {
+			dt.statusLabel.SetText(fmt.Sprintf("Ставлю «%s»: %s %s — %s (%d)",
+				diligence, student.LastName, student.FirstName, date.AssignmentDate[5:], successCount+1))
+		})
+
+		err := apiClient.CreateDiaryComment(student.ID, date.AssignmentDateID, qID, comment)
+		if err == nil {
+			successCount++
+		}
+	}
+
+	fyne.Do(func() {
+		dt.statusLabel.SetText(fmt.Sprintf("Готово (legacy): %d записей для %s %s",
+			successCount, student.LastName, student.FirstName))
+	})
+}
+
+// Refresh updates the tab with new data.
+func (dt *DiariesTab) Refresh() {
+	go dt.loadInitialData()
 }
