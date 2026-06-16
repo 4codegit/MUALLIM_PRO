@@ -4,6 +4,7 @@ import (
         "fmt"
         "image/color"
         "strconv"
+        "sync"
 
         "fyne.io/fyne/v2"
         "fyne.io/fyne/v2/canvas"
@@ -146,7 +147,7 @@ func (d *Dashboard) buildHeader() *fyne.Container {
         appTitle.TextStyle = fyne.TextStyle{Bold: true}
         appTitle.TextSize = 18
 
-        versionTag := canvas.NewText("v5.3", colorAccent)
+        versionTag := canvas.NewText("v5.3.1", colorAccent)
         versionTag.TextSize = 11
         versionTag.TextStyle = fyne.TextStyle{Bold: true}
 
@@ -646,7 +647,7 @@ func (d *Dashboard) installKeyboardHandler() {
                         d.navigateCell(-1, 0)
                 case fyne.KeyRight:
                         d.navigateCell(1, 0)
-                case fyne.KeyDelete:
+                case fyne.KeyDelete, fyne.KeyBackspace:
                         d.deleteSelectedCell()
                 }
         })
@@ -731,10 +732,12 @@ func (d *Dashboard) deleteSelectedCell() {
 
         // Find the mark ID for this cell
         var markID string
+        var currentGrade string
         for _, sm := range student.SubjectMarks {
                 if sm.AssignmentDateID == date.AssignmentDateID {
                         if sm.AssignmentMarkID != "" {
                                 markID = sm.AssignmentMarkID
+                                currentGrade = sm.ShortName
                         }
                         break
                 }
@@ -746,7 +749,7 @@ func (d *Dashboard) deleteSelectedCell() {
         }
 
         confirmMsg := fmt.Sprintf("Удалить оценку %s для %s %s — %s?",
-                student.SubjectMarks[0].ShortName, student.LastName, student.FirstName,
+                currentGrade, student.LastName, student.FirstName,
                 date.AssignmentDate[5:])
 
         dialog.ShowConfirm("Удалить оценку", confirmMsg, func(ok bool) {
@@ -761,11 +764,102 @@ func (d *Dashboard) deleteSelectedCell() {
                                 } else {
                                         d.statusLabel.SetText(fmt.Sprintf("Оценка удалена: %s %s — %s",
                                                 student.LastName, student.FirstName, date.AssignmentDate[5:]))
-                                        go d.loadData()
+                                        // Update local data immediately without full reload
+                                        d.removeMarkFromStudent(studentIdx, date.AssignmentDateID)
+                                        // Recalculate average asynchronously
+                                        go d.recalcAveragesAsync()
+                                        // Refresh the table
+                                        d.gradesTable.Unselect(id)
+                                        d.gradesTable.Select(id)
                                 }
                         })
                 }()
         }, d.controller.GetWindow())
+}
+
+// removeMarkFromStudent removes a mark from the local student data without API call.
+func (d *Dashboard) removeMarkFromStudent(studentIdx int, assignmentDateID string) {
+        if studentIdx >= len(d.students) {
+                return
+        }
+        student := &d.students[studentIdx]
+        for i, sm := range student.SubjectMarks {
+                if sm.AssignmentDateID == assignmentDateID {
+                        student.SubjectMarks[i].AssignmentMarkID = ""
+                        student.SubjectMarks[i].ShortName = ""
+                        student.SubjectMarks[i].IsNum = false
+                        break
+                }
+        }
+}
+
+// updateMarkInStudent updates a mark in the local student data after CreateMark success.
+func (d *Dashboard) updateMarkInStudent(studentIdx int, assignmentDateID string, grade int) {
+        if studentIdx >= len(d.students) {
+                return
+        }
+        student := &d.students[studentIdx]
+        gradeStr := strconv.Itoa(grade)
+        for i, sm := range student.SubjectMarks {
+                if sm.AssignmentDateID == assignmentDateID {
+                        student.SubjectMarks[i].ShortName = gradeStr
+                        student.SubjectMarks[i].IsNum = true
+                        break
+                }
+        }
+}
+
+// recalcAveragesAsync recalculates average scores for all students asynchronously.
+// It fetches fresh data from the API and updates the table with new averages.
+func (d *Dashboard) recalcAveragesAsync() {
+        if d.selectedGroup == nil || d.selectedSubject == nil || d.selectedQuarter == nil {
+                return
+        }
+
+        apiClient := d.controller.GetClient()
+        gID := d.selectedGroup.ID
+        sID := d.selectedSubject.SubjectID
+        qID := d.selectedQuarter.ID
+
+        students, err := apiClient.GetJournalStudents(gID, sID, qID)
+        if err != nil {
+                return
+        }
+
+        fyne.Do(func() {
+                if d.gradesTable == nil {
+                        return
+                }
+
+                // Update average scores from fresh API data
+                var wg sync.WaitGroup
+                for i := range students {
+                        if i >= len(d.students) {
+                                break
+                        }
+                        // Find matching student by ID and update average
+                        for j := range d.students {
+                                if d.students[j].StudentID == students[i].StudentID {
+                                        wg.Add(1)
+                                        go func(idx int, newAvg string) {
+                                                defer wg.Done()
+                                                d.students[idx].AverageScore = newAvg
+                                        }(j, students[i].AverageScore)
+                                        break
+                                }
+                        }
+                }
+                wg.Wait()
+
+                // Refresh only the average column
+                numDateCols := len(d.dates)
+                totalCols := 2 + numDateCols + 1
+                avgCol := totalCols - 1
+                for row := 1; row <= len(d.students); row++ {
+                        d.gradesTable.Unselect(widget.TableCellID{Row: row, Col: avgCol})
+                }
+                d.gradesTable.Refresh()
+        })
 }
 
 // ------------------------------------------
@@ -833,7 +927,15 @@ func (d *Dashboard) showEditGradePopup(studentIdx, dateIdx int) {
                                 } else {
                                         d.statusLabel.SetText(fmt.Sprintf("Оценка %d: %s %s — %s",
                                                 grade, student.LastName, student.FirstName, date.AssignmentDate[5:]))
-                                        go d.loadData()
+                                        // Update local mark data immediately
+                                        d.updateMarkInStudent(studentIdx, date.AssignmentDateID, grade)
+                                        // Recalculate averages asynchronously
+                                        go d.recalcAveragesAsync()
+                                        // Refresh table display
+                                        if d.selectedCell != nil {
+                                                d.gradesTable.Unselect(*d.selectedCell)
+                                                d.gradesTable.Select(*d.selectedCell)
+                                        }
                                 }
                         })
                 }()
