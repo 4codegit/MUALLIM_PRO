@@ -147,7 +147,7 @@ func (d *Dashboard) buildHeader() *fyne.Container {
         appTitle.TextStyle = fyne.TextStyle{Bold: true}
         appTitle.TextSize = 18
 
-        versionTag := canvas.NewText("v5.3.1", colorAccent)
+        versionTag := canvas.NewText("v5.3.2", colorAccent)
         versionTag.TextSize = 11
         versionTag.TextStyle = fyne.TextStyle{Bold: true}
 
@@ -1067,13 +1067,18 @@ func (d *Dashboard) executeRandomFillForStudent(studentIdx, minVal, maxVal int) 
                 )
                 if err == nil {
                         successCount++
+                        // Update local data immediately so the table reflects changes
+                        d.updateMarkInStudent(studentIdx, date.AssignmentDateID, grade)
                 }
         }
 
         fyne.Do(func() {
                 d.statusLabel.SetText(fmt.Sprintf("Готово: %d оценок для %s %s (пропущено: %d)",
                         successCount, student.LastName, student.FirstName, skipCount))
-                go d.loadData()
+                // Recalculate averages asynchronously instead of full reload
+                go d.recalcAveragesAsync()
+                // Refresh table to show updated grades
+                d.gradesTable.Refresh()
         })
 }
 
