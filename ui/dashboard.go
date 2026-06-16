@@ -29,6 +29,41 @@ var (
 )
 
 // ------------------------------------------
+// KEYBOARD INTERCEPTOR — grabs Delete/Backspace/Arrow keys
+// even when Entry/Select widgets have focus
+// ------------------------------------------
+
+type keyInterceptor struct {
+        widget.BaseWidget
+        child    fyne.CanvasObject
+        onKeyDown func(*fyne.KeyEvent)
+}
+
+func newKeyInterceptor(child fyne.CanvasObject, onKeyDown func(*fyne.KeyEvent)) *keyInterceptor {
+        ki := &keyInterceptor{child: child, onKeyDown: onKeyDown}
+        ki.ExtendBaseWidget(ki)
+        return ki
+}
+
+func (ki *keyInterceptor) CreateRenderer() fyne.WidgetRenderer {
+        return widget.NewSimpleRenderer(ki.child)
+}
+
+func (ki *keyInterceptor) TypedKey(ev *fyne.KeyEvent) {
+        if ki.onKeyDown != nil {
+                ki.onKeyDown(ev)
+        }
+}
+
+func (ki *keyInterceptor) TypedRune(r rune) {
+        // Do nothing — let the child handle runes
+}
+
+// keyInterceptor implements fyne.Focusable so Canvas.Focus(ki) works.
+func (ki *keyInterceptor) FocusGained() {}
+func (ki *keyInterceptor) FocusLost()  {}
+
+// ------------------------------------------
 // DASHBOARD
 // ------------------------------------------
 
@@ -63,6 +98,7 @@ type Dashboard struct {
         // Tab content objects
         gradesTable     *widget.Table
         gradesContainer *fyne.Container
+        keyGrabber      *keyInterceptor // grabs keyboard focus for shortcuts
 
         // Journal selection state
         selectedCell *widget.TableCellID
@@ -148,7 +184,7 @@ func (d *Dashboard) buildHeader() *fyne.Container {
         appTitle.TextStyle = fyne.TextStyle{Bold: true}
         appTitle.TextSize = 18
 
-        versionTag := canvas.NewText("v5.3.3", colorAccent)
+        versionTag := canvas.NewText("v5.3.4", colorAccent)
         versionTag.TextSize = 11
         versionTag.TextStyle = fyne.TextStyle{Bold: true}
 
@@ -559,8 +595,10 @@ func (d *Dashboard) rebuildGradesTable() {
         d.gradesTable.SetColumnWidth(totalCols-1, 50) // avg
 
         // Track selection state — time-based double-click detection
-        // Fyne Table.OnSelected does NOT fire when clicking an already-selected cell,
-        // so we must unselect after each click to allow re-selection on the next click.
+        // We track the last tap time and cell to detect double-clicks within 600ms.
+        // After each selection, we immediately unselect so that clicking the same
+        // cell again triggers OnSelected (Fyne Table silently ignores Select on
+        // already-selected cells).
         var lastTapTime time.Time
         var lastTapCell widget.TableCellID
 
@@ -574,6 +612,9 @@ func (d *Dashboard) rebuildGradesTable() {
                 } else {
                         d.deleteBtn.Disable()
                 }
+
+                // Grab keyboard focus so Delete/Backspace/Arrow keys work
+                d.focusKeyGrabber()
 
                 // Time-based double-click detection (600ms window)
                 now := time.Now()
@@ -590,6 +631,9 @@ func (d *Dashboard) rebuildGradesTable() {
                                 if studentIdx < len(d.students) {
                                         d.showRandomFillForStudent(studentIdx)
                                 }
+                                // Unselect so next click re-triggers OnSelected
+                                d.gradesTable.Unselect(id)
+                                d.selectedCell = &id
                                 return
                         }
 
@@ -600,6 +644,8 @@ func (d *Dashboard) rebuildGradesTable() {
                                 if studentIdx < len(d.students) && dateIdx < len(d.dates) {
                                         d.showEditGradePopup(studentIdx, dateIdx)
                                 }
+                                d.gradesTable.Unselect(id)
+                                d.selectedCell = &id
                                 return
                         }
                 } else {
@@ -608,28 +654,41 @@ func (d *Dashboard) rebuildGradesTable() {
                         lastTapCell = id
                 }
 
-                // Unselect after a short delay so the next click triggers OnSelected again.
-                // Without this, Fyne ignores second click on the same cell.
-                // We keep d.selectedCell intact so arrow keys still work.
-                savedCell := id
-                go func() {
-                        time.Sleep(100 * time.Millisecond)
-                        fyne.Do(func() {
-                                d.gradesTable.Unselect(savedCell)
-                                // Restore selectedCell so keyboard navigation still works
-                                d.selectedCell = &savedCell
-                        })
-                }()
+                // Immediately unselect so the next click on the SAME cell triggers
+                // OnSelected again. Fyne Table.Select() returns early if already selected.
+                // We preserve d.selectedCell so Delete/Backspace/Arrows still work.
+                d.gradesTable.Unselect(id)
+                d.selectedCell = &id
         }
 
         // Wrap table in scroll for cross-platform responsiveness (horizontal + vertical)
         scrollWrap := container.NewScroll(d.gradesTable)
         scrollWrap.Direction = container.ScrollBoth
 
-        d.gradesContainer.Objects = []fyne.CanvasObject{scrollWrap}
+        // Wrap in keyInterceptor so Delete/Backspace/Arrows are ALWAYS captured,
+        // even when Select/Entry widgets have focus.
+        d.keyGrabber = newKeyInterceptor(scrollWrap, func(ev *fyne.KeyEvent) {
+                if d.gradesTable == nil || d.currentPage != d.gradesContainer {
+                        return
+                }
+                switch ev.Name {
+                case fyne.KeyUp:
+                        d.navigateCell(0, -1)
+                case fyne.KeyDown:
+                        d.navigateCell(0, 1)
+                case fyne.KeyLeft:
+                        d.navigateCell(-1, 0)
+                case fyne.KeyRight:
+                        d.navigateCell(1, 0)
+                case fyne.KeyDelete, fyne.KeyBackspace:
+                        d.deleteSelectedCell()
+                }
+        })
+
+        d.gradesContainer.Objects = []fyne.CanvasObject{d.keyGrabber}
         d.gradesContainer.Refresh()
 
-        // Install keyboard handler for arrow navigation, Delete key
+        // Install canvas-level keyboard handler as fallback
         d.installKeyboardHandler()
 }
 
@@ -637,9 +696,26 @@ func (d *Dashboard) rebuildGradesTable() {
 // KEYBOARD HANDLER — Arrow keys + Delete key
 // ------------------------------------------
 
+// focusKeyGrabber moves keyboard focus to the keyInterceptor widget,
+// so Delete/Backspace/Arrow keys are captured instead of being consumed
+// by Entry or Select widgets.
+func (d *Dashboard) focusKeyGrabber() {
+        if d.keyGrabber == nil {
+                return
+        }
+        w := d.controller.GetWindow()
+        if w == nil {
+                return
+        }
+        c := w.Canvas()
+        if c == nil {
+                return
+        }
+        c.Focus(d.keyGrabber)
+}
+
 // installKeyboardHandler sets up arrow key navigation and Delete key on the
-// window's canvas so that the user can move between journal cells and delete
-// grades without reaching for the mouse.
+// window's canvas as a FALLBACK. The primary handler is the keyInterceptor.
 func (d *Dashboard) installKeyboardHandler() {
         w := d.controller.GetWindow()
         if w == nil {
