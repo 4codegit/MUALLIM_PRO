@@ -5,7 +5,7 @@ set -e
 VERSION=${1:-$(git describe --tags 2>/dev/null || echo "v0.1.0")}
 
 echo "=========================================="
-echo "  Edonish App - Multi-Platform Build"
+echo "  Edonish Auto — Multi-Platform Build"
 echo "  Version: $VERSION"
 echo "=========================================="
 
@@ -26,15 +26,15 @@ case $PLATFORM in
         ;;
     all)
         echo "🔨 Building for all platforms..."
-        
+
         echo ""
         echo "🐧 Linux build..."
         bash build_linux.sh "$VERSION" || echo "❌ Linux build failed"
-        
+
         echo ""
         echo "🪟 Windows build..."
         bash build_windows.sh "$VERSION" || echo "❌ Windows build failed"
-        
+
         echo ""
         echo "🤖 Android build..."
         bash build_android_go.sh "$VERSION" || echo "❌ Android build failed"
