@@ -119,9 +119,14 @@ def delete_quarter_mark(token, quarter_mark_id):
     )
     return resp.json()
 
-def create_semester_mark(token, student_id, semester_property_id, grade):
-    """Создать семестровую оценку"""
-    headers = {"Authorization": f"Bearer $token", "Content-Type": "application/json"}
+def create_semester_mark(token, student_id, semester_property_id, grade,
+                         subject_id=0, curriculum_property_id=0):
+    """Создать семестровую оценку.
+
+    Note: edonish API (since 2026) requires mark_id, subject_id, curriculum_property_id
+    in the request body — otherwise the server returns 422 Unprocessable Entity.
+    """
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     resp = requests.post(
         f"{BASE_URL}/teacher/v1/journal/10_point_semester/create",
         params={"school_id": SCHOOL_ID, "lang": 1},
@@ -129,7 +134,10 @@ def create_semester_mark(token, student_id, semester_property_id, grade):
         json={
             "mark_type_id": grade,
             "group_subgroup_student_id": student_id,
-            "semester_property_id": semester_property_id
+            "semester_property_id": semester_property_id,
+            "mark_id": grade,
+            "subject_id": subject_id,
+            "curriculum_property_id": curriculum_property_id,
         }
     )
     data = resp.json()
