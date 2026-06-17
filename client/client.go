@@ -555,7 +555,7 @@ type UpdateFinalGradeRequest struct {
 type UpdateAssignmentRequest struct {
         ScheduleDateID    string `json:"schedule_date_id"`
         Topic             string `json:"topic"`
-        HomeWork          string `json:"home_work"`
+        HomeWork          string `json:"homeWork"` // camelCase — matches GET /journal/dates response field
         QuarterPropertyID int    `json:"quarter_property_id"`
 }
 
