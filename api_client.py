@@ -597,11 +597,10 @@ class EdonishAPI:
         if topic:
             body["topic"] = topic
         if home_work:
-            # edonish API expects snake_case `home_work`, matching `schedule_date_id`.
-            # The Go client (client.go:549) also uses `home_work`. Earlier versions
-            # mistakenly sent `homeWork` (camelCase), which silently dropped homework
-            # updates — topic saved but ДЗ did not.
-            body["home_work"] = home_work
+            # edonish API expects camelCase `homeWork` — same as the field name
+            # returned by GET /journal/dates. The earlier `home_work` (snake_case)
+            # form was silently dropped by the server, so topic saved but ДЗ did not.
+            body["homeWork"] = home_work
         return self._request(
             "POST",
             self._url(JOURNAL_ASSIGNMENT_UPDATE),
