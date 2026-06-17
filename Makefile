@@ -1,52 +1,26 @@
-# eDonish Auto — Makefile (Python + Go)
+# eDonish Auto — Makefile (Go + Fyne)
 
-.PHONY: gui cli install analyze view clean help build-linux build-windows build-android build-all
+.PHONY: help deps run linux windows android macos all clean
 
 # Default target
 help:
 	@echo "eDonish Auto — команды:"
 	@echo ""
-	@echo "=== Python ==="
-	@echo "  make gui          — Запустить GUI (Python)"
-	@echo "  make cli          — Запустить CLI с аргументами (ARGS=...)"
-	@echo "  make install      — Установить Python зависимости"
-	@echo "  make analyze      — Только анализ (без записи)"
-	@echo "  make view         — Просмотр журнала"
-	@echo ""
-	@echo "=== Go/Fyne ==="
-	@echo "  make go-deps      — Установить Go зависимости"
-	@echo "  make go-run       — Запустить Go приложение"
-	@echo "  make linux        — Собрать для Linux (binary + deb + rpm)"
-	@echo "  make windows      — Собрать для Windows (exe + installer)"
-	@echo "  make android      — Собрать для Android (apk)"
-	@echo "  make all          — Собрать для всех платформ"
-	@echo "  make go-clean     — Очистить Go сборочные файлы"
+	@echo "  make deps      — Установить Go зависимости"
+	@echo "  make run       — Запустить приложение"
+	@echo "  make linux     — Собрать для Linux (binary + deb + rpm)"
+	@echo "  make windows   — Собрать для Windows (exe)"
+	@echo "  make android   — Собрать для Android (apk)"
+	@echo "  make macos     — Собрать для macOS (binary)"
+	@echo "  make all       — Собрать для всех платформ"
+	@echo "  make clean     — Очистить сборочные файлы"
+	@echo "  make vet       — Проверить код go vet"
 
-gui:
-	python3 main.py
-
-cli:
-	python3 main_cli.py $(ARGS)
-
-install:
-	pip install -r requirements.txt
-
-analyze:
-	python3 main_cli.py $(ARGS) --analyze-only --save-report
-
-view:
-	python3 main_cli.py $(ARGS) --view-journal
-
-clean:
-	rm -rf logs/ output/
-
-# Go commands
-go-deps:
+deps:
 	go mod tidy
 	go get fyne.io/fyne/v2@latest
-	go get github.com/PuerkitoBio/goquery@latest
 
-go-run: go-deps
+run: deps
 	go run .
 
 linux:
@@ -58,10 +32,17 @@ windows:
 android:
 	@bash build_android_go.sh $(shell git describe --tags 2>/dev/null || echo "dev")
 
+macos:
+	@echo "🔨 Building for macOS..."
+	GOOS=darwin GOARCH=amd64 go build -o release/macos/edonish-auto .
+
 all: linux windows android
 	@echo "✅ All builds complete!"
 
-go-clean:
+vet:
+	go vet ./...
+
+clean:
 	rm -rf release/ deb/ rpm/
-	rm -f edonish-app-linux edonish-app-windows.exe edonish-app.apk
+	rm -f edonish-auto-linux edonish-auto-windows.exe edonish-auto.apk
 	go clean
