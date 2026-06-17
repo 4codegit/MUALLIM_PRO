@@ -511,18 +511,27 @@ type QuarterMarkCreateRequest struct {
 
 // SemesterMarkCreateRequest is the body for creating a semester mark.
 // Uses POST /journal/10_point_semester/create
+// As of 2026, the edonish API requires mark_id, subject_id, and curriculum_property_id
+// (same as QuarterMarkCreateRequest). Without them the server returns 422.
 type SemesterMarkCreateRequest struct {
         GroupSubgroupStudentID int `json:"group_subgroup_student_id"`
         SemesterPropertyID     int `json:"semester_property_id"`
         Mark                   int `json:"mark"`
+        MarkID                 int `json:"mark_id"` // In 10-point system, mark_id == mark
+        SubjectID              int `json:"subject_id"`
+        CurriculumPropertyID   int `json:"curriculum_property_id"`
 }
 
 // YearMarkCreateRequest is the body for creating a year mark.
 // Uses POST /journal/10_point_year/create
+// As of 2026, the edonish API requires mark_id, subject_id, and curriculum_property_id.
 type YearMarkCreateRequest struct {
         GroupSubgroupStudentID int `json:"group_subgroup_student_id"`
         YearPropertyID         int `json:"year_property_id"`
         Mark                   int `json:"mark"`
+        MarkID                 int `json:"mark_id"` // In 10-point system, mark_id == mark
+        SubjectID              int `json:"subject_id"`
+        CurriculumPropertyID   int `json:"curriculum_property_id"`
 }
 
 // FinalGrade represents an итоговая оценка (quarter/semester/year).
@@ -546,7 +555,7 @@ type UpdateFinalGradeRequest struct {
 type UpdateAssignmentRequest struct {
         ScheduleDateID    string `json:"schedule_date_id"`
         Topic             string `json:"topic"`
-        HomeWork          string `json:"home_work"`
+        HomeWork          string `json:"homeWork"` // camelCase — matches GET /journal/dates response field
         QuarterPropertyID int    `json:"quarter_property_id"`
 }
 
@@ -903,11 +912,15 @@ func (c *EdonishClient) CreateQuarterMark(studentID, quarterPropertyID, mark, su
 
 // CreateSemesterMark creates or updates a semester mark for a student.
 // Uses POST /journal/10_point_semester/create
-func (c *EdonishClient) CreateSemesterMark(studentID, semesterPropertyID, mark int) error {
+// subjectID and curriculumPropertyID are required by the edonish API (since 2026).
+func (c *EdonishClient) CreateSemesterMark(studentID, semesterPropertyID, mark, subjectID, curriculumPropertyID int) error {
         reqBody := SemesterMarkCreateRequest{
                 GroupSubgroupStudentID: studentID,
                 SemesterPropertyID:     semesterPropertyID,
                 Mark:                   mark,
+                MarkID:                 mark, // 10-point system: mark_id == mark
+                SubjectID:              subjectID,
+                CurriculumPropertyID:   curriculumPropertyID,
         }
 
         u := c.buildURL("/journal/10_point_semester/create", nil)
@@ -922,11 +935,15 @@ func (c *EdonishClient) CreateSemesterMark(studentID, semesterPropertyID, mark i
 
 // CreateYearMark creates or updates a year mark for a student.
 // Uses POST /journal/10_point_year/create
-func (c *EdonishClient) CreateYearMark(studentID, yearPropertyID, mark int) error {
+// subjectID and curriculumPropertyID are required by the edonish API (since 2026).
+func (c *EdonishClient) CreateYearMark(studentID, yearPropertyID, mark, subjectID, curriculumPropertyID int) error {
         reqBody := YearMarkCreateRequest{
                 GroupSubgroupStudentID: studentID,
                 YearPropertyID:         yearPropertyID,
                 Mark:                   mark,
+                MarkID:                 mark, // 10-point system: mark_id == mark
+                SubjectID:              subjectID,
+                CurriculumPropertyID:   curriculumPropertyID,
         }
 
         u := c.buildURL("/journal/10_point_year/create", nil)

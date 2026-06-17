@@ -3841,7 +3841,11 @@ class EdonishAutoApp:
         threading.Thread(target=do_set, daemon=True).start()
 
     def _delete_cell_grade(self, row, col):
-        """Delete the grade from a cell via API call."""
+        """Delete the grade from a cell via API call.
+
+        Shows a confirmation dialog first — pressing Delete on a cell should
+        not silently remove an existing mark.
+        """
         data = self._grade_data.get((row, col))
         if not data:
             return
@@ -3852,7 +3856,7 @@ class EdonishAutoApp:
 
         mark_id = data.get("mark_id", "")
         if not mark_id:
-            # No grade to delete — just clear the cell visually
+            # No grade to delete — just clear the cell visually, no confirmation needed
             def clear_ui():
                 cell.value = ""
                 cell.bgcolor = ft.Colors.GREY_50 if row % 2 == 0 else ft.Colors.SURFACE
@@ -3862,6 +3866,82 @@ class EdonishAutoApp:
                 data["mark_id"] = ""
                 self._safe_update()
             self.page.run_thread(clear_ui)
+            return
+
+        # Build student/date context for a meaningful dialog message
+        date_label = ""
+        date_id = data.get("date_id", "")
+        if date_id and getattr(self, "_dates_data", None):
+            for d in self._dates_data:
+                if d.get("assignmentDateId") == date_id:
+                    date_label = (d.get("assignmentDate") or "")[:10]
+                    break
+        current_val = data.get("current_value", "") or ""
+        if current_val and date_label:
+            msg = (
+                f"Удалить оценку «{current_val}»\n"
+                f"за дату: {date_label}?\n\n"
+                f"Это действие нельзя отменить."
+            )
+        elif current_val:
+            msg = (
+                f"Удалить оценку «{current_val}»?\n\n"
+                f"Это действие нельзя отменить."
+            )
+        else:
+            msg = "Удалить оценку?\n\nЭто действие нельзя отменить."
+
+        # Confirmation dialog — store pending (row, col) so the handler knows what to delete
+        self._pending_delete_cell = (row, col)
+        self._cell_delete_dialog = AlertDialog(
+            modal=True,
+            title=Text("Удаление оценки", weight=FontWeight.W_700),
+            content=Text(msg, size=15),
+            actions=[
+                TextButton(
+                    content=Text("Отмена", size=15),
+                    on_click=lambda _: self._close_cell_delete_dialog(),
+                ),
+                FilledButton(
+                    content=ft.Text("Удалить", size=15, weight=FontWeight.W_600),
+                    style=ButtonStyle(bgcolor=ft.Colors.RED_600),
+                    on_click=lambda _: self._confirm_delete_cell(),
+                ),
+            ],
+        )
+        self.page.overlay.append(self._cell_delete_dialog)
+        self._cell_delete_dialog.open = True
+        self.page.update()
+
+    def _close_cell_delete_dialog(self):
+        """Close the single-cell delete confirmation dialog."""
+        if hasattr(self, '_cell_delete_dialog') and self._cell_delete_dialog:
+            self._cell_delete_dialog.open = False
+            try:
+                self.page.update()
+            except Exception:
+                pass
+        self._pending_delete_cell = None
+
+    def _confirm_delete_cell(self):
+        """User confirmed — actually delete the mark for the pending cell."""
+        target = getattr(self, '_pending_delete_cell', None)
+        self._close_cell_delete_dialog()
+        if not target:
+            return
+        row, col = target
+        self._do_delete_cell_grade(row, col)
+
+    def _do_delete_cell_grade(self, row, col):
+        """Perform the actual API deletion + UI update for a single cell."""
+        data = self._grade_data.get((row, col))
+        if not data:
+            return
+        cell = self._grade_cells.get((row, col))
+        if not cell:
+            return
+        mark_id = data.get("mark_id", "")
+        if not mark_id:
             return
 
         # Visual feedback
@@ -4105,6 +4185,8 @@ class EdonishAutoApp:
                     student_id=student_id,
                     semester_property_id=semester_property_id,
                     mark=semester_grade,
+                    subject_id=qdata.get("subject_id", subject_id),
+                    curriculum_property_id=qdata.get("curriculum_property_id", 0),
                 )
                 if result and not (isinstance(result, dict) and result.get("error")):
                     self._log_message(f"✅ Полугодие {semester_grade} поставлено (строка {row + 1})")
@@ -4202,6 +4284,8 @@ class EdonishAutoApp:
                     student_id=student_id,
                     year_property_id=year_property_id,
                     mark=year_grade,
+                    subject_id=qdata.get("subject_id", subject_id),
+                    curriculum_property_id=qdata.get("curriculum_property_id", 0),
                 )
                 if result and not (isinstance(result, dict) and result.get("error")):
                     self._log_message(f"✅ Годовая оценка {year_grade} поставлена (строка {row + 1})")

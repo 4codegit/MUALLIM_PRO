@@ -544,14 +544,22 @@ func (t *FinalGradesTab) saveGrade(sIdx, col, grade int, markID string) {
                         } else if len(t.selectedGroup.Quarters) > 3 {
                                 semesterID = t.selectedGroup.Quarters[3].ID // Q4 end = H2
                         }
-                        err = apiClient.CreateSemesterMark(student.StudentID, semesterID, grade)
+                        err = apiClient.CreateSemesterMark(
+                                student.StudentID, semesterID, grade,
+                                t.selectedSubject.SubjectID,
+                                t.selectedSubject.CurriculumPropertyID,
+                        )
                 case colYear:
                         // Year: need year property ID
                         yearID := 0
                         if len(t.selectedGroup.Quarters) > 3 {
                                 yearID = t.selectedGroup.Quarters[3].ID
                         }
-                        err = apiClient.CreateYearMark(student.StudentID, yearID, grade)
+                        err = apiClient.CreateYearMark(
+                                student.StudentID, yearID, grade,
+                                t.selectedSubject.SubjectID,
+                                t.selectedSubject.CurriculumPropertyID,
+                        )
                 }
         }
 
@@ -873,7 +881,11 @@ func (t *FinalGradesTab) executeRandomFill(minVal, maxVal int, cols []struct {
                                         semesterID = t.selectedGroup.Quarters[3].ID
                                 }
                                 if semesterID > 0 {
-                                        apiClient.CreateSemesterMark(student.StudentID, semesterID, grade)
+                                        apiClient.CreateSemesterMark(
+                                                student.StudentID, semesterID, grade,
+                                                t.selectedSubject.SubjectID,
+                                                t.selectedSubject.CurriculumPropertyID,
+                                        )
                                         successCount++
                                 }
                         case colYear:
@@ -882,7 +894,11 @@ func (t *FinalGradesTab) executeRandomFill(minVal, maxVal int, cols []struct {
                                         yearID = t.selectedGroup.Quarters[3].ID
                                 }
                                 if yearID > 0 {
-                                        apiClient.CreateYearMark(student.StudentID, yearID, grade)
+                                        apiClient.CreateYearMark(
+                                                student.StudentID, yearID, grade,
+                                                t.selectedSubject.SubjectID,
+                                                t.selectedSubject.CurriculumPropertyID,
+                                        )
                                         successCount++
                                 }
                         }
