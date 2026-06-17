@@ -444,13 +444,23 @@ class EdonishAPI:
         )
 
     def create_semester_mark(
-        self, student_id: int, semester_property_id: int, mark: int
+        self, student_id: int, semester_property_id: int, mark: int,
+        subject_id: int = 0, curriculum_property_id: int = 0,
     ) -> Optional[Dict]:
-        """Create a semester (полугодовая) mark."""
+        """Create a semester (полугодовая) mark.
+
+        Required by edonish API (since 2026): mark_id, subject_id, curriculum_property_id
+        are mandatory. mark_id equals the mark value in the 10-point system, same as
+        for quarter marks.
+        """
+        mark_id = mark  # For 10-point system, mark_id equals the mark value
         body = {
             "group_subgroup_student_id": student_id,
             "semester_property_id": semester_property_id,
             "mark": mark,
+            "mark_id": mark_id,
+            "subject_id": subject_id,
+            "curriculum_property_id": curriculum_property_id,
         }
         return self._request(
             "POST",
@@ -460,13 +470,22 @@ class EdonishAPI:
         )
 
     def create_year_mark(
-        self, student_id: int, year_property_id: int, mark: int
+        self, student_id: int, year_property_id: int, mark: int,
+        subject_id: int = 0, curriculum_property_id: int = 0,
     ) -> Optional[Dict]:
-        """Create a year (годовая) mark."""
+        """Create a year (годовая) mark.
+
+        Required by edonish API (since 2026): mark_id, subject_id, curriculum_property_id
+        are mandatory. mark_id equals the mark value in the 10-point system.
+        """
+        mark_id = mark  # For 10-point system, mark_id equals the mark value
         body = {
             "group_subgroup_student_id": student_id,
             "year_property_id": year_property_id,
             "mark": mark,
+            "mark_id": mark_id,
+            "subject_id": subject_id,
+            "curriculum_property_id": curriculum_property_id,
         }
         return self._request(
             "POST",
@@ -578,7 +597,11 @@ class EdonishAPI:
         if topic:
             body["topic"] = topic
         if home_work:
-            body["homeWork"] = home_work
+            # edonish API expects snake_case `home_work`, matching `schedule_date_id`.
+            # The Go client (client.go:549) also uses `home_work`. Earlier versions
+            # mistakenly sent `homeWork` (camelCase), which silently dropped homework
+            # updates — topic saved but ДЗ did not.
+            body["home_work"] = home_work
         return self._request(
             "POST",
             self._url(JOURNAL_ASSIGNMENT_UPDATE),
