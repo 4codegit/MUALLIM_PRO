@@ -157,7 +157,7 @@ c.client, err = client.NewEdonishClient(
 )
 ```
 
-### Обнаруженные endpoints (на основе Python версии)
+### Endpoints
 
 | Endpoint | Метод | Описание |
 |----------|-------|----------|
@@ -166,16 +166,12 @@ c.client, err = client.NewEdonishClient(
 | `/teacher/v1/journal/dates` | GET | Даты журнала |
 | `/teacher/v1/journal/students` | GET | Студенты с оценками |
 | `/teacher/v1/journal/10_point_mark/create` | POST | Создание оценки |
-| `/school_admin/v1/period/quaters` | GET | Список четвертей |
+| `/teacher/v1/journal/10_point_semester/create` | POST | Полугодовая оценка |
+| `/teacher/v1/journal/10_point_year/create` | POST | Годовая оценка |
+| `/teacher/v1/journal/assignment/update` | POST | Тема урока и ДЗ |
+| `/teacher/v1/journal/mark/delete` | POST | Удаление оценки |
 
-**Обновите `client/client.go`** с реальными эндпоинтами:
-
-```go
-// В структуре EdonishClient
-authURL:    "https://edonish.tj/auth/v1/login",      // Авторизация
-scheduleURL: "https://edonish.tj/teacher/v1/journal", // Расписание
-gradesURL:   "https://edonish.tj/teacher/v1/journal/students", // Оценки
-```
+Все эндпоинты уже настроены в `client/client.go`.
 
 ---
 
@@ -209,14 +205,9 @@ gradesURL:   "https://edonish.tj/teacher/v1/journal/students", // Оценки
 
 ## 🔐 Авторизация
 
-Пример входа с вашими данными:
-
-```
-Логин: 20011XXYX
-Пароль: ********
-```
-
-**Безопасность:** Пароли вводятся через UI и не хранятся в коде!
+Логин и пароль вводятся через экран входа и сохраняются локально в
+`~/.edonish_session.json` (только если включена опция «Запомнить меня»).
+Учётные данные **никогда** не хранятся в исходном коде.
 
 ---
 
@@ -262,7 +253,7 @@ git push origin v0.1.0
 ### Локальная сборка всех платформ
 
 ```bash
-# Сделать все для текущей платформы
+# Собрать для всех платформ
 bash build_all.sh v0.1.0 all
 
 # Или конкретную платформу
