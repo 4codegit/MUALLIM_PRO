@@ -184,7 +184,7 @@ func (d *Dashboard) buildHeader() *fyne.Container {
         appTitle.TextStyle = fyne.TextStyle{Bold: true}
         appTitle.TextSize = 18
 
-        versionTag := canvas.NewText("v5.4.0", colorAccent)
+        versionTag := canvas.NewText("v5.4.6", colorAccent)
         versionTag.TextSize = 11
         versionTag.TextStyle = fyne.TextStyle{Bold: true}
 
@@ -198,9 +198,16 @@ func (d *Dashboard) buildHeader() *fyne.Container {
         logoutBtn := widget.NewButton("Выйти", d.controller.Logout)
         logoutBtn.Importance = widget.DangerImportance
 
+        // Theme toggle — cycles Dark → Modern White → Fyne Light.
+        // Uses ColorPaletteIcon because Fyne 2.7.4 doesn't ship a brightness icon.
+        themeBtn := widget.NewButtonWithIcon("Тема", theme.ColorPaletteIcon(), func() {
+                d.controller.ToggleTheme()
+        })
+        themeBtn.Importance = widget.LowImportance
+
         leftBox := container.NewHBox(appTitle, versionTag)
         userInfoBox := container.NewVBox(userLabel, roleLabel)
-        rightBox := container.NewHBox(userInfoBox, logoutBtn)
+        rightBox := container.NewHBox(userInfoBox, themeBtn, logoutBtn)
 
         bg := canvas.NewRectangle(colorNavBG)
         bg.SetMinSize(fyne.NewSize(0, 52))

@@ -82,9 +82,27 @@ type Quarter struct {
 }
 
 type QuarterDates struct {
-        Name              string `json:"name"`
-        QuarterPropertyID int    `json:"quarterPropertyId"`
-        Days              []Day  `json:"days"`
+        Name              string           `json:"name"`
+        QuarterPropertyID int              `json:"quarterPropertyId"`
+        StartDate         string           `json:"startDate"`
+        EndDate           string           `json:"endDate"`
+        CurrentDate       string           `json:"currentDate"`
+        Semester          []SemesterInfo   `json:"semester"`
+        EducationYear     []EducationYear  `json:"educationYear"`
+        Days              []Day            `json:"days"`
+}
+
+// SemesterInfo is the semester metadata embedded in the /journal/dates response.
+// Each quarter response includes the semester that the quarter belongs to.
+type SemesterInfo struct {
+        SemesterName        string `json:"semesterName"`
+        SemesterPropertyID  int    `json:"semesterPropertyId"`
+}
+
+// EducationYear is the school-year metadata embedded in the /journal/dates response.
+type EducationYear struct {
+        EducationYearName string `json:"educationYearName"`
+        EducationYearID   int    `json:"educationYearId"`
 }
 
 type Day struct {
@@ -420,6 +438,24 @@ func (c *EdonishClient) GetJournalOptions() (*JournalOptions, error) {
 
 // GetJournalDates fetches dates and assignments.
 func (c *EdonishClient) GetJournalDates(groupID, subjectID, quarterID int) ([]Day, error) {
+        qDates, err := c.GetJournalDatesFull(groupID, subjectID, quarterID)
+        if err != nil {
+                return nil, err
+        }
+        if len(qDates) == 0 {
+                return []Day{}, nil
+        }
+        return qDates[0].Days, nil
+}
+
+// GetJournalDatesFull fetches dates and assignments WITH the full QuarterDates
+// metadata (including Semester and EducationYear info needed for
+// CreateSemesterMark / CreateYearMark).
+//
+// Use this instead of GetJournalDates when you need semesterPropertyId or
+// educationYearId — without them, CreateSemesterMark / CreateYearMark will
+// fail with FK constraint violations (server returns 409).
+func (c *EdonishClient) GetJournalDatesFull(groupID, subjectID, quarterID int) ([]QuarterDates, error) {
         params := map[string]string{
                 "group_id":            strconv.Itoa(groupID),
                 "subject_id":          strconv.Itoa(subjectID),
@@ -440,11 +476,7 @@ func (c *EdonishClient) GetJournalDates(groupID, subjectID, quarterID int) ([]Da
         if err := json.Unmarshal(respBody, &qDates); err != nil {
                 return nil, err
         }
-
-        if len(qDates) == 0 {
-                return []Day{}, nil
-        }
-        return qDates[0].Days, nil
+        return qDates, nil
 }
 
 // GetJournalStudents fetches students and their marks.
@@ -690,8 +722,48 @@ type DiaryDay struct {
         Comment   string `json:"comment"`
 }
 
+// unwrapResponse tries to unwrap a server response that may be either a raw
+// JSON array OR a wrapped object like {"code":200,"data":[...]} or
+// {"data":[...]} or {"result":[...]} or {"items":[...]}.
+//
+// The edonish.tj API is inconsistent — some endpoints return raw arrays
+// (e.g. /journal/students), others wrap them in an envelope (e.g. /myclass
+// returns an object). This helper lets us unmarshal either form into a
+// single Go slice.
+//
+// Returns the JSON bytes of the array portion (or the original bytes if no
+// recognised wrapper is found).
+func unwrapResponse(respBody []byte) []byte {
+        // Quick check: if it starts with '[', it's already an array.
+        trimmed := bytes.TrimLeft(respBody, " \t\r\n")
+        if len(trimmed) > 0 && trimmed[0] == '[' {
+                return respBody
+        }
+
+        // Try common wrapper shapes
+        var wrapper map[string]json.RawMessage
+        if err := json.Unmarshal(respBody, &wrapper); err != nil {
+                return respBody
+        }
+
+        // Look for a known envelope key whose value is an array
+        for _, key := range []string{"data", "result", "results", "items", "list"} {
+                if raw, ok := wrapper[key]; ok {
+                        // Check if the value is an array
+                        t := bytes.TrimLeft(raw, " \t\r\n")
+                        if len(t) > 0 && t[0] == '[' {
+                                return raw
+                        }
+                }
+        }
+        return respBody
+}
+
 // GetMyClassGroups fetches the list of class groups for the diary.
 // Uses OPTIONS /myclass?lang=...&school_id=...
+//
+// The server response may be wrapped as {"data":[...]} (object) or be a
+// raw array. We handle both via unwrapResponse.
 func (c *EdonishClient) GetMyClassGroups() ([]MyClassGroup, error) {
         u := c.buildURL("/myclass", nil)
         req, err := http.NewRequest("OPTIONS", u, nil)
@@ -705,7 +777,7 @@ func (c *EdonishClient) GetMyClassGroups() ([]MyClassGroup, error) {
         }
 
         var groups []MyClassGroup
-        if err := json.Unmarshal(respBody, &groups); err != nil {
+        if err := json.Unmarshal(unwrapResponse(respBody), &groups); err != nil {
                 return nil, err
         }
         return groups, nil
@@ -713,6 +785,8 @@ func (c *EdonishClient) GetMyClassGroups() ([]MyClassGroup, error) {
 
 // GetMyClassStudents fetches students for a specific class group.
 // Uses GET /myclass/students?group_id=...&school_id=...
+//
+// Server response may be wrapped as {"data":[...]} or be a raw array.
 func (c *EdonishClient) GetMyClassStudents(groupID int) ([]MyClassStudent, error) {
         params := map[string]string{
                 "group_id": strconv.Itoa(groupID),
@@ -729,7 +803,7 @@ func (c *EdonishClient) GetMyClassStudents(groupID int) ([]MyClassStudent, error
         }
 
         var students []MyClassStudent
-        if err := json.Unmarshal(respBody, &students); err != nil {
+        if err := json.Unmarshal(unwrapResponse(respBody), &students); err != nil {
                 return nil, err
         }
         return students, nil
@@ -737,6 +811,8 @@ func (c *EdonishClient) GetMyClassStudents(groupID int) ([]MyClassStudent, error
 
 // GetDiaryBehaviorOptions fetches available behavior/diligence options for diary signatures.
 // Uses OPTIONS /myclass/student/diary/signature?lang=...&school_id=...
+//
+// Server response may be wrapped as {"data":[...]} or be a raw array.
 func (c *EdonishClient) GetDiaryBehaviorOptions() ([]DiaryBehaviorOption, error) {
         u := c.buildURL("/myclass/student/diary/signature", nil)
         req, err := http.NewRequest("OPTIONS", u, nil)
@@ -750,7 +826,7 @@ func (c *EdonishClient) GetDiaryBehaviorOptions() ([]DiaryBehaviorOption, error)
         }
 
         var options []DiaryBehaviorOption
-        if err := json.Unmarshal(respBody, &options); err != nil {
+        if err := json.Unmarshal(unwrapResponse(respBody), &options); err != nil {
                 return nil, err
         }
         return options, nil
@@ -758,12 +834,14 @@ func (c *EdonishClient) GetDiaryBehaviorOptions() ([]DiaryBehaviorOption, error)
 
 // GetDiaryData fetches diary data for a student in a date range.
 // Uses GET /myclass/diary?lang=...&start_date=...&end_date=...&group_id=...&school_student_id=...&school_id=...
+//
+// Server response may be wrapped as {"data":[...]} or be a raw array.
 func (c *EdonishClient) GetDiaryData(groupID, studentID int, startDate, endDate string) ([]DiaryDay, error) {
         params := map[string]string{
-                "group_id":           strconv.Itoa(groupID),
-                "school_student_id":  strconv.Itoa(studentID),
-                "start_date":         startDate,
-                "end_date":           endDate,
+                "group_id":          strconv.Itoa(groupID),
+                "school_student_id": strconv.Itoa(studentID),
+                "start_date":        startDate,
+                "end_date":          endDate,
         }
         u := c.buildURL("/myclass/diary", params)
         req, err := http.NewRequest("GET", u, nil)
@@ -777,7 +855,7 @@ func (c *EdonishClient) GetDiaryData(groupID, studentID int, startDate, endDate 
         }
 
         var days []DiaryDay
-        if err := json.Unmarshal(respBody, &days); err != nil {
+        if err := json.Unmarshal(unwrapResponse(respBody), &days); err != nil {
                 // The API might return null for empty
                 return []DiaryDay{}, nil
         }

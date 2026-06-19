@@ -20,11 +20,18 @@ type SessionData struct {
         Remember bool   `json:"remember"`
 }
 
+// themeMode cycles through: 0=Dark, 1=Modern White, 2=Fyne Light
+const (
+        themeDark        = 0
+        themeModernWhite = 1
+        themeFyneLight   = 2
+)
+
 type AppController struct {
         fyneApp    fyne.App
         mainWindow fyne.Window
         apiClient  *client.EdonishClient
-        isDark     bool
+        themeMode  int
         session    *SessionData
 }
 
@@ -32,7 +39,7 @@ func NewAppController() *AppController {
         ac := &AppController{
                 fyneApp:   app.NewWithID("tj.edonish.auto"),
                 apiClient: client.NewEdonishClient(),
-                isDark:    true,
+                themeMode: themeDark,
         }
 
         ac.mainWindow = ac.fyneApp.NewWindow("eDonish Auto")
@@ -89,15 +96,19 @@ func (ac *AppController) Logout() {
         ac.ShowLogin()
 }
 
+// ToggleTheme cycles through 3 modes: Dark → Modern White → Fyne Light → Dark.
 func (ac *AppController) ToggleTheme() {
-        ac.isDark = !ac.isDark
+        ac.themeMode = (ac.themeMode + 1) % 3
         ac.applyTheme()
 }
 
 func (ac *AppController) applyTheme() {
-        if ac.isDark {
+        switch ac.themeMode {
+        case themeDark:
                 ac.fyneApp.Settings().SetTheme(theme.DarkTheme())
-        } else {
+        case themeModernWhite:
+                ac.fyneApp.Settings().SetTheme(ui.NewModernWhiteTheme())
+        case themeFyneLight:
                 ac.fyneApp.Settings().SetTheme(theme.LightTheme())
         }
 }
