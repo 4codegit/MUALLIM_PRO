@@ -171,9 +171,27 @@ type EdonishClient struct {
 }
 
 func NewEdonishClient() *EdonishClient {
+        // Custom transport with connection pooling tuned for many concurrent
+        // requests to the same host (edonish.tj). The default http.Transport
+        // has MaxIdleConnsPerHost=2, which effectively serialises concurrent
+        // requests to the same host through only 2 keep-alive sockets — every
+        // additional in-flight request either opens a fresh TCP+TLS connection
+        // (~300-500ms) or waits for a free slot. Bumping MaxIdleConnsPerHost
+        // to 16 lets the worker pool fire 8-16 parallel POSTs without ever
+        // re-handshaking TLS.
+        tr := &http.Transport{
+                MaxIdleConns:        50,
+                MaxIdleConnsPerHost: 16,
+                IdleConnTimeout:     90 * time.Second,
+                TLSHandshakeTimeout: 10 * time.Second,
+                ResponseHeaderTimeout: 15 * time.Second,
+                ExpectContinueTimeout: 1 * time.Second,
+                ForceAttemptHTTP2:   true,
+        }
         return &EdonishClient{
                 httpClient: &http.Client{
-                        Timeout: 15 * time.Second,
+                        Timeout:   30 * time.Second,
+                        Transport: tr,
                 },
         }
 }
