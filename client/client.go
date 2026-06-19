@@ -341,6 +341,13 @@ func (c *EdonishClient) buildURL(endpoint string, params map[string]string) stri
 }
 
 // doRequest performs request and auto-retries on 401/403 with token refresh.
+//
+// Body handling: when `body` is non-nil, it's JSON-marshalled and assigned to
+// req.Body. We ALSO set req.ContentLength explicitly — without this, the
+// http.Client would use Transfer-Encoding: chunked (because http.NewRequest
+// was called with nil body, leaving ContentLength=0). Some servers parse
+// chunked bodies inconsistently — particularly for non-first fields — which
+// manifested as "topic saves but ДЗ doesn't" on /journal/assignment/update.
 func (c *EdonishClient) doRequest(req *http.Request, body interface{}) ([]byte, int, error) {
         if req.Header.Get("Authorization") == "" && c.JWTToken != "" {
                 req.Header.Set("Authorization", "Bearer "+c.JWTToken)
@@ -351,6 +358,7 @@ func (c *EdonishClient) doRequest(req *http.Request, body interface{}) ([]byte, 
                         return nil, 0, err
                 }
                 req.Body = io.NopCloser(bytes.NewBuffer(jsonData))
+                req.ContentLength = int64(len(jsonData))
                 req.Header.Set("Content-Type", "application/json")
         }
 
@@ -372,6 +380,7 @@ func (c *EdonishClient) doRequest(req *http.Request, body interface{}) ([]byte, 
                         if body != nil {
                                 jsonData, _ := json.Marshal(body)
                                 req.Body = io.NopCloser(bytes.NewBuffer(jsonData))
+                                req.ContentLength = int64(len(jsonData))
                         }
                         resp2, err2 := c.httpClient.Do(req)
                         if err2 == nil {
@@ -570,20 +579,40 @@ type UpdateFinalGradeRequest struct {
 // --- Topic & HomeWork methods ---
 
 // UpdateAssignmentRequest is the body for updating topic and/or homework on a date.
+//
+// Field name history:
+//   - v5.4.1: `home_work` (snake_case) — matched `schedule_date_id` / `quarter_property_id`
+//   - v5.4.2: `homeWork` (camelCase)   — matched GET /journal/dates response field
+//   - v5.4.5: BOTH sent simultaneously — server expects `home_work` (snake_case);
+//             `homeWork` is also sent as a fallback. The server picks whichever
+//             it recognises and ignores the others.
+//
+// The user reported "тема сохраняется а дз не сохраняется" in v5.4.1 (Python used
+// `homeWork`) AND in v5.4.4 (Go used `homeWork`). So `homeWork` alone is wrong.
+// `home_work` is the most likely correct name because every other POST body field
+// on this endpoint uses snake_case. We send all three plausible variants to be safe.
 type UpdateAssignmentRequest struct {
         ScheduleDateID    string `json:"schedule_date_id"`
         Topic             string `json:"topic"`
-        HomeWork          string `json:"homeWork"` // camelCase — matches GET /journal/dates response field
+        HomeWork          string `json:"homeWork"`  // camelCase (matches GET response)
+        HomeWorkSnake     string `json:"home_work"` // snake_case (matches other POST fields)
+        HomeWorkLower     string `json:"homework"`  // lowercase (simple form)
         QuarterPropertyID int    `json:"quarter_property_id"`
 }
 
 // UpdateAssignment updates the topic and/or homework for a specific date.
 // Uses POST /journal/assignment/update
+//
+// The server treats this as an upsert — existing topic and ДЗ are overwritten.
+// All three homework field-name variants are sent in the body so the server
+// picks whichever its parser recognises.
 func (c *EdonishClient) UpdateAssignment(scheduleDateID, topic, homeWork string, quarterPropertyID int) error {
         reqBody := UpdateAssignmentRequest{
                 ScheduleDateID:    scheduleDateID,
                 Topic:             topic,
                 HomeWork:          homeWork,
+                HomeWorkSnake:     homeWork,
+                HomeWorkLower:     homeWork,
                 QuarterPropertyID: quarterPropertyID,
         }
 
