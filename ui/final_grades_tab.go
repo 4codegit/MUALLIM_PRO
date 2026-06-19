@@ -4,6 +4,7 @@ import (
         "fmt"
         "image/color"
         "strconv"
+        "sync"
 
         "fyne.io/fyne/v2"
         "fyne.io/fyne/v2/canvas"
@@ -60,6 +61,17 @@ type FinalGradesTab struct {
         selectedGroup   *client.JournalGroup
         selectedSubject *client.Subject
         students        []client.FinalGradeStudent
+
+        // Semester / Year property IDs — derived from /journal/dates responses
+        // (each quarter response includes the semester it belongs to + the
+        // education year). These are needed by CreateSemesterMark /
+        // CreateYearMark — without them the server returns 409 FK violation:
+        //   insert or update on table "student_semester_mark" violates foreign
+        //   key constraint "student_semester_mark_semester_id_fkey"
+        // Indexed: 0 = H1 (from Q1/Q2), 1 = H2 (from Q3/Q4).
+        semesterPropertyIDs [2]int
+        // Year property ID — single value, same across all quarters.
+        yearPropertyID       int
 
         // UI
         gradesTable     *widget.Table
@@ -239,6 +251,60 @@ func (t *FinalGradesTab) loadData() {
         })
 
         apiClient := t.controller.GetClient()
+
+        // Fetch final-grade students AND quarter-dates in parallel. The
+        // quarter-dates response includes the semester_property_id and
+        // education_year_id we need for CreateSemesterMark / CreateYearMark —
+        // without them the server returns 409 FK violation.
+        type datesResult struct {
+                qi     int
+                qDates []client.QuarterDates
+                err    error
+        }
+        datesCh := make(chan datesResult, len(t.selectedGroup.Quarters))
+        var dwg sync.WaitGroup
+        for qi, q := range t.selectedGroup.Quarters {
+                dwg.Add(1)
+                go func(idx int, qID int) {
+                        defer dwg.Done()
+                        qd, err := apiClient.GetJournalDatesFull(t.selectedGroup.ID, t.selectedSubject.SubjectID, qID)
+                        datesCh <- datesResult{qi: idx, qDates: qd, err: err}
+                }(qi, q.ID)
+        }
+        dwg.Wait()
+        close(datesCh)
+
+        // Reset cached IDs
+        t.semesterPropertyIDs = [2]int{0, 0}
+        t.yearPropertyID = 0
+
+        // Collect: Q1/Q2 → H1 (semesterPropertyIDs[0]); Q3/Q4 → H2 (semesterPropertyIDs[1])
+        // Year ID is the same across all quarters — take the first non-zero one.
+        for r := range datesCh {
+                if r.err != nil || len(r.qDates) == 0 {
+                        continue
+                }
+                qd := r.qDates[0]
+                // Semester
+                if len(qd.Semester) > 0 && qd.Semester[0].SemesterPropertyID > 0 {
+                        if r.qi <= 1 {
+                                // Q1 or Q2 → H1
+                                if t.semesterPropertyIDs[0] == 0 {
+                                        t.semesterPropertyIDs[0] = qd.Semester[0].SemesterPropertyID
+                                }
+                        } else {
+                                // Q3 or Q4 → H2
+                                if t.semesterPropertyIDs[1] == 0 {
+                                        t.semesterPropertyIDs[1] = qd.Semester[0].SemesterPropertyID
+                                }
+                        }
+                }
+                // Education year
+                if t.yearPropertyID == 0 && len(qd.EducationYear) > 0 && qd.EducationYear[0].EducationYearID > 0 {
+                        t.yearPropertyID = qd.EducationYear[0].EducationYearID
+                }
+        }
+
         students, err := apiClient.GetFinalGradesAll(
                 t.selectedGroup.ID,
                 t.selectedSubject.SubjectID,
@@ -263,7 +329,8 @@ func (t *FinalGradesTab) loadData() {
 
                 t.students = students
                 t.rebuildGradesTable()
-                t.statusLabel.SetText(fmt.Sprintf("Загружено: %d учеников", len(students)))
+                t.statusLabel.SetText(fmt.Sprintf("Загружено: %d учеников (H1=%d, H2=%d, Year=%d)",
+                        len(students), t.semesterPropertyIDs[0], t.semesterPropertyIDs[1], t.yearPropertyID))
         })
 }
 
@@ -531,35 +598,35 @@ func (t *FinalGradesTab) saveGrade(sIdx, col, grade int, markID string) {
                                 t.selectedSubject.CurriculumPropertyID,
                         )
                 case colH1, colH2:
-                        // Semester: need semester property ID
+                        // Semester: use semesterPropertyID extracted from /journal/dates.
+                        // The previous code passed the Q2/Q4 quarter_property_id which
+                        // caused a 409 FK violation on student_semester_mark.semester_id.
                         si := 0
                         if col == colH2 {
                                 si = 1
                         }
-                        // Try to get semester property ID from quarter data
-                        semesterID := 0
-                        if si == 0 && len(t.selectedGroup.Quarters) > 1 {
-                                // H1: derive from Q1 or Q2 quarter property
-                                semesterID = t.selectedGroup.Quarters[1].ID // Q2 end = H1
-                        } else if len(t.selectedGroup.Quarters) > 3 {
-                                semesterID = t.selectedGroup.Quarters[3].ID // Q4 end = H2
+                        semesterID := t.semesterPropertyIDs[si]
+                        if semesterID == 0 {
+                                err = fmt.Errorf("semester_property_id неизвестен для H%d — перезагрузите вкладку", si+1)
+                        } else {
+                                err = apiClient.CreateSemesterMark(
+                                        student.StudentID, semesterID, grade,
+                                        t.selectedSubject.SubjectID,
+                                        t.selectedSubject.CurriculumPropertyID,
+                                )
                         }
-                        err = apiClient.CreateSemesterMark(
-                                student.StudentID, semesterID, grade,
-                                t.selectedSubject.SubjectID,
-                                t.selectedSubject.CurriculumPropertyID,
-                        )
                 case colYear:
-                        // Year: need year property ID
-                        yearID := 0
-                        if len(t.selectedGroup.Quarters) > 3 {
-                                yearID = t.selectedGroup.Quarters[3].ID
+                        // Year: use educationYearId extracted from /journal/dates.
+                        yearID := t.yearPropertyID
+                        if yearID == 0 {
+                                err = fmt.Errorf("year_property_id неизвестен — перезагрузите вкладку")
+                        } else {
+                                err = apiClient.CreateYearMark(
+                                        student.StudentID, yearID, grade,
+                                        t.selectedSubject.SubjectID,
+                                        t.selectedSubject.CurriculumPropertyID,
+                                )
                         }
-                        err = apiClient.CreateYearMark(
-                                student.StudentID, yearID, grade,
-                                t.selectedSubject.SubjectID,
-                                t.selectedSubject.CurriculumPropertyID,
-                        )
                 }
         }
 
@@ -874,12 +941,7 @@ func (t *FinalGradesTab) executeRandomFill(minVal, maxVal int, cols []struct {
                                 if c.col == colH2 {
                                         si = 1
                                 }
-                                semesterID := 0
-                                if si == 0 && len(t.selectedGroup.Quarters) > 1 {
-                                        semesterID = t.selectedGroup.Quarters[1].ID
-                                } else if len(t.selectedGroup.Quarters) > 3 {
-                                        semesterID = t.selectedGroup.Quarters[3].ID
-                                }
+                                semesterID := t.semesterPropertyIDs[si]
                                 if semesterID > 0 {
                                         apiClient.CreateSemesterMark(
                                                 student.StudentID, semesterID, grade,
@@ -889,10 +951,7 @@ func (t *FinalGradesTab) executeRandomFill(minVal, maxVal int, cols []struct {
                                         successCount++
                                 }
                         case colYear:
-                                yearID := 0
-                                if len(t.selectedGroup.Quarters) > 3 {
-                                        yearID = t.selectedGroup.Quarters[3].ID
-                                }
+                                yearID := t.yearPropertyID
                                 if yearID > 0 {
                                         apiClient.CreateYearMark(
                                                 student.StudentID, yearID, grade,
