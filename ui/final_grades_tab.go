@@ -5,6 +5,8 @@ import (
         "image/color"
         "strconv"
         "sync"
+        "sync/atomic"
+        "time"
 
         "fyne.io/fyne/v2"
         "fyne.io/fyne/v2/canvas"
@@ -651,62 +653,297 @@ func (t *FinalGradesTab) onAcceptRecommendations() {
                 return
         }
 
-        dialog.ShowConfirm("Принять рекомендации",
-                "Будут выставлены рекомендованные четвертные оценки\nдля всех учеников, у которых они ещё не выставлены.\n\nПродолжить?",
-                func(ok bool) {
-                        if !ok {
-                                return
-                        }
-                        go t.executeAcceptRecommendations()
-                }, t.controller.GetWindow())
+        confirmMsg := "Будут выставлены рекомендованные итоговые оценки\nдля всех учеников, у которых они ещё не выставлены:\n\n" +
+                "• Четвертные Q1–Q4 — из среднего балла по предметным оценкам в этой четверти\n" +
+                "• Полугодие H1 — ceil((Q1 + Q2) / 2)\n" +
+                "• Полугодие H2 — ceil((Q3 + Q4) / 2)\n" +
+                "• Годовая     — ceil((Q1 + Q2 + Q3 + Q4) / 4)\n\n" +
+                "Существующие оценки НЕ перезаписываются.\n" +
+                "Запросы отправляются параллельно (8 потоков).\n\n" +
+                "Продолжить?"
+
+        dialog.ShowConfirm("Принять рекомендации", confirmMsg, func(ok bool) {
+                if !ok {
+                        return
+                }
+                go t.executeAcceptRecommendations()
+        }, t.controller.GetWindow())
 }
 
+// executeAcceptRecommendations fills ALL empty final-grade cells for every
+// student:
+//   - Q1-Q4: ceil(avg of subject marks for that quarter), skipped if quarter
+//     has no subject marks
+//   - H1: ceil((Q1+Q2)/2) using cached semesterPropertyIDs[0]
+//   - H2: ceil((Q3+Q4)/2) using cached semesterPropertyIDs[1]
+//   - Year: ceil((Q1+Q2+Q3+Q4)/4) using cached yearPropertyID
+//
+// Existing final-grade cells are NOT overwritten — only empty ones are filled.
+// Subject marks for each quarter are fetched in parallel up-front, then the
+// per-student fill loop runs in a worker pool of 8 goroutines.
 func (t *FinalGradesTab) executeAcceptRecommendations() {
         apiClient := t.controller.GetClient()
         total := len(t.students)
-        successCount := 0
-        skipCount := 0
+        groupID := t.selectedGroup.ID
+        subjectID := t.selectedSubject.SubjectID
+        curriculumPropertyID := t.selectedSubject.CurriculumPropertyID
 
-        for i, student := range t.students {
-                avg := student.GetAverageScore()
-                if avg <= 0 {
-                        skipCount++
+        fyne.Do(func() {
+                t.statusLabel.SetText("Загрузка оценок по четвертям...")
+        })
+
+        // Step 1: Fetch fresh subject-marks per quarter (in parallel).
+        // We need these to compute the recommended quarter mark for each student
+        // — the cached t.students list only has the FinalGradeStudent aggregate
+        // (with quarter marks but not subject marks).
+        type quarterData struct {
+                qi       int
+                quarter  client.Quarter
+                students []client.Student
+                err      error
+        }
+        quarterDataCh := make(chan quarterData, len(t.selectedGroup.Quarters))
+        var qwg sync.WaitGroup
+        for qi, q := range t.selectedGroup.Quarters {
+                qwg.Add(1)
+                go func(idx int, q client.Quarter) {
+                        defer qwg.Done()
+                        studs, err := apiClient.GetJournalStudents(groupID, subjectID, q.ID)
+                        quarterDataCh <- quarterData{qi: idx, quarter: q, students: studs, err: err}
+                }(qi, q)
+        }
+        qwg.Wait()
+        close(quarterDataCh)
+
+        // Build studentID -> {qi -> subject-marks avg} map
+        type quarterAvg struct {
+                hasSubjectMarks bool
+                avg             float64
+        }
+        studentQuarterAvgs := make(map[int][4]quarterAvg) // [studentID][0..3]
+        for qd := range quarterDataCh {
+                if qd.err != nil {
                         continue
                 }
-
-                recommendedGrade := AverageToGrade(avg)
-
-                // Fill empty quarter marks with recommendations
-                for qi := 0; qi < 4; qi++ {
-                        if student.QuarterMarks[qi].ShortName != "" {
-                                continue // Already has a grade
+                for _, s := range qd.students {
+                        var grades []int
+                        for _, sm := range s.SubjectMarks {
+                                g := ParseShortNameToGrade(sm.ShortName)
+                                if g >= 2 && g <= 10 {
+                                        grades = append(grades, g)
+                                }
                         }
-                        if qi >= len(t.selectedGroup.Quarters) {
-                                continue
+                        qa := studentQuarterAvgs[s.StudentID]
+                        if len(grades) > 0 {
+                                sum := 0
+                                for _, g := range grades {
+                                        sum += g
+                                }
+                                qa[qd.qi] = quarterAvg{hasSubjectMarks: true, avg: float64(sum) / float64(len(grades))}
                         }
-
-                        fyne.Do(func() {
-                                t.statusLabel.SetText(fmt.Sprintf("Рекомендация %d/%d: %s → %d",
-                                        i+1, total, student.LastName, recommendedGrade))
-                        })
-
-                        err := apiClient.CreateQuarterMark(
-                                student.StudentID,
-                                t.selectedGroup.Quarters[qi].ID,
-                                recommendedGrade,
-                                t.selectedSubject.SubjectID,
-                                t.selectedSubject.CurriculumPropertyID,
-                        )
-                        if err != nil {
-                                continue
-                        }
-                        successCount++
-                        break // One quarter mark per student for now
+                        studentQuarterAvgs[s.StudentID] = qa
                 }
         }
 
+        // Step 2: Build the list of save jobs (one job per student).
+        type saveJob struct {
+                studentIdx int
+                student    client.FinalGradeStudent
+                quartAvgs  [4]quarterAvg
+        }
+        jobs := make(chan saveJob, total)
+        for i, s := range t.students {
+                jobs <- saveJob{studentIdx: i, student: s, quartAvgs: studentQuarterAvgs[s.StudentID]}
+        }
+        close(jobs)
+
+        // Step 3: Worker pool processes jobs in parallel.
+        const concurrency = 8
+        var successCount, skipCount, failCount int32
+        var firstErrMsg string
+        var firstErrSet int32
+
+        // Status ticker
+        done := make(chan struct{})
+        go func() {
+                for {
+                        select {
+                        case <-done:
+                                return
+                        case <-time.After(200 * time.Millisecond):
+                                s := atomic.LoadInt32(&successCount)
+                                f := atomic.LoadInt32(&failCount)
+                                sk := atomic.LoadInt32(&skipCount)
+                                fyne.Do(func() {
+                                        t.statusLabel.SetText(fmt.Sprintf("Рекомендации: ✓ %d / ✗ %d / ⊘ %d из %d", s, f, sk, total))
+                                })
+                        }
+                }
+        }()
+        defer close(done)
+
+        var wg sync.WaitGroup
+        for w := 0; w < concurrency; w++ {
+                wg.Add(1)
+                go func() {
+                        defer wg.Done()
+                        for job := range jobs {
+                                s := job.student
+                                // Compute recommended quarter grades (only for empty cells)
+                                var recQ [4]int // -1 = no recommendation, 0 = skip (already has), 2-10 = grade
+                                for qi := 0; qi < 4; qi++ {
+                                        if s.QuarterMarks[qi].ShortName != "" {
+                                                recQ[qi] = 0 // already set
+                                                continue
+                                        }
+                                        qa := job.quartAvgs[qi]
+                                        if !qa.hasSubjectMarks || qa.avg <= 0 {
+                                                recQ[qi] = -1
+                                                continue
+                                        }
+                                        recQ[qi] = AverageToGrade(qa.avg)
+                                }
+
+                                // Save quarter marks (only those that have a recommendation)
+                                for qi := 0; qi < 4; qi++ {
+                                        if recQ[qi] <= 0 {
+                                                continue
+                                        }
+                                        if qi >= len(t.selectedGroup.Quarters) {
+                                                continue
+                                        }
+                                        err := apiClient.CreateQuarterMark(
+                                                s.StudentID,
+                                                t.selectedGroup.Quarters[qi].ID,
+                                                recQ[qi],
+                                                subjectID,
+                                                curriculumPropertyID,
+                                        )
+                                        if err == nil {
+                                                atomic.AddInt32(&successCount, 1)
+                                        } else {
+                                                atomic.AddInt32(&failCount, 1)
+                                                if atomic.CompareAndSwapInt32(&firstErrSet, 0, 1) {
+                                                        firstErrMsg = err.Error()
+                                                }
+                                        }
+                                }
+
+                                // Determine effective Q values for H1/H2/Year calculation:
+                                // use the recommendation if we just filled it, otherwise use
+                                // the existing quarter mark.
+                                effectiveQ := [4]int{-1, -1, -1, -1}
+                                for qi := 0; qi < 4; qi++ {
+                                        if recQ[qi] > 0 {
+                                                effectiveQ[qi] = recQ[qi]
+                                        } else if s.QuarterMarks[qi].ShortName != "" {
+                                                g := ParseShortNameToGrade(s.QuarterMarks[qi].ShortName)
+                                                if g >= 2 {
+                                                        effectiveQ[qi] = g
+                                                }
+                                        }
+                                }
+
+                                // H1: ceil((Q1+Q2)/2) — only if both Q1 and Q2 are known,
+                                // and H1 cell is currently empty.
+                                if s.SemesterMarks[0].ShortName == "" && t.semesterPropertyIDs[0] > 0 {
+                                        if effectiveQ[0] > 0 && effectiveQ[1] > 0 {
+                                                avg := float64(effectiveQ[0]+effectiveQ[1]) / 2.0
+                                                grade := AverageToGrade(avg)
+                                                err := apiClient.CreateSemesterMark(
+                                                        s.StudentID, t.semesterPropertyIDs[0], grade,
+                                                        subjectID, curriculumPropertyID,
+                                                )
+                                                if err == nil {
+                                                        atomic.AddInt32(&successCount, 1)
+                                                } else {
+                                                        atomic.AddInt32(&failCount, 1)
+                                                        if atomic.CompareAndSwapInt32(&firstErrSet, 0, 1) {
+                                                                firstErrMsg = err.Error()
+                                                        }
+                                                }
+                                        }
+                                }
+
+                                // H2: ceil((Q3+Q4)/2)
+                                if s.SemesterMarks[1].ShortName == "" && t.semesterPropertyIDs[1] > 0 {
+                                        if effectiveQ[2] > 0 && effectiveQ[3] > 0 {
+                                                avg := float64(effectiveQ[2]+effectiveQ[3]) / 2.0
+                                                grade := AverageToGrade(avg)
+                                                err := apiClient.CreateSemesterMark(
+                                                        s.StudentID, t.semesterPropertyIDs[1], grade,
+                                                        subjectID, curriculumPropertyID,
+                                                )
+                                                if err == nil {
+                                                        atomic.AddInt32(&successCount, 1)
+                                                } else {
+                                                        atomic.AddInt32(&failCount, 1)
+                                                        if atomic.CompareAndSwapInt32(&firstErrSet, 0, 1) {
+                                                                firstErrMsg = err.Error()
+                                                        }
+                                                }
+                                        }
+                                }
+
+                                // Year: ceil((Q1+Q2+Q3+Q4)/4)
+                                if (s.YearMark == nil || s.YearMark.ShortName == "") && t.yearPropertyID > 0 {
+                                        qcount := 0
+                                        qsum := 0
+                                        for qi := 0; qi < 4; qi++ {
+                                                if effectiveQ[qi] > 0 {
+                                                        qsum += effectiveQ[qi]
+                                                        qcount++
+                                                }
+                                        }
+                                        if qcount == 4 {
+                                                avg := float64(qsum) / 4.0
+                                                grade := AverageToGrade(avg)
+                                                err := apiClient.CreateYearMark(
+                                                        s.StudentID, t.yearPropertyID, grade,
+                                                        subjectID, curriculumPropertyID,
+                                                )
+                                                if err == nil {
+                                                        atomic.AddInt32(&successCount, 1)
+                                                } else {
+                                                        atomic.AddInt32(&failCount, 1)
+                                                        if atomic.CompareAndSwapInt32(&firstErrSet, 0, 1) {
+                                                                firstErrMsg = err.Error()
+                                                        }
+                                                }
+                                        }
+                                }
+
+                                // If we made no API calls for this student (everything was
+                                // already filled or no data), count as skipped.
+                                anyAction := false
+                                for qi := 0; qi < 4; qi++ {
+                                        if recQ[qi] > 0 {
+                                                anyAction = true
+                                                break
+                                        }
+                                }
+                                if !anyAction &&
+                                        (s.SemesterMarks[0].ShortName != "" || t.semesterPropertyIDs[0] == 0 || !(effectiveQ[0] > 0 && effectiveQ[1] > 0)) &&
+                                        (s.SemesterMarks[1].ShortName != "" || t.semesterPropertyIDs[1] == 0 || !(effectiveQ[2] > 0 && effectiveQ[3] > 0)) &&
+                                        ((s.YearMark != nil && s.YearMark.ShortName != "") || t.yearPropertyID == 0 || !(effectiveQ[0] > 0 && effectiveQ[1] > 0 && effectiveQ[2] > 0 && effectiveQ[3] > 0)) {
+                                        atomic.AddInt32(&skipCount, 1)
+                                }
+                        }
+                }()
+        }
+        wg.Wait()
+
+        finalSuccess := int(atomic.LoadInt32(&successCount))
+        finalFail := int(atomic.LoadInt32(&failCount))
+        finalSkip := int(atomic.LoadInt32(&skipCount))
+
         fyne.Do(func() {
-                t.statusLabel.SetText(fmt.Sprintf("Рекомендации приняты: %d оценок, пропущено: %d", successCount, skipCount))
+                msg := fmt.Sprintf("Рекомендации приняты: ✓ %d / ✗ %d / ⊘ %d пропущено",
+                        finalSuccess, finalFail, finalSkip)
+                if finalFail > 0 && firstErrMsg != "" {
+                        msg += fmt.Sprintf("  |  первая ошибка: %s", firstErrMsg)
+                }
+                t.statusLabel.SetText(msg)
                 go t.loadData()
         })
 }
