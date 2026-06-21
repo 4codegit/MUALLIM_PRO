@@ -723,16 +723,23 @@ type DiaryDay struct {
 }
 
 // unwrapResponse tries to unwrap a server response that may be either a raw
-// JSON array OR a wrapped object like {"code":200,"data":[...]} or
-// {"data":[...]} or {"result":[...]} or {"items":[...]}.
+// JSON array OR a wrapped object whose value at some key is the array.
 //
-// The edonish.tj API is inconsistent — some endpoints return raw arrays
-// (e.g. /journal/students), others wrap them in an envelope (e.g. /myclass
-// returns an object). This helper lets us unmarshal either form into a
-// single Go slice.
+// The edonish.tj /myclass endpoints return objects like:
+//   {"data":[...]}            (common REST envelope)
+//   {"groups":[...]}          (resource-named envelope)
+//   {"classes":[...]}         (alternative naming)
+//   {"result":{"groups":[...]}} (nested — handled by recursion)
+//
+// Hardcoding a key list was too brittle — we now scan ALL top-level keys
+// and return the first one whose value is a JSON array. If none of the
+// top-level values is an array, we recurse one level into any nested
+// object values looking for an array. This catches shapes like
+// {"result":{"groups":[...]}}.
 //
 // Returns the JSON bytes of the array portion (or the original bytes if no
-// recognised wrapper is found).
+// array is found anywhere — caller's unmarshal will then fail with a
+// helpful error including the response body).
 func unwrapResponse(respBody []byte) []byte {
         // Quick check: if it starts with '[', it's already an array.
         trimmed := bytes.TrimLeft(respBody, " \t\r\n")
@@ -740,23 +747,54 @@ func unwrapResponse(respBody []byte) []byte {
                 return respBody
         }
 
-        // Try common wrapper shapes
+        // Parse as a generic object
         var wrapper map[string]json.RawMessage
         if err := json.Unmarshal(respBody, &wrapper); err != nil {
                 return respBody
         }
 
-        // Look for a known envelope key whose value is an array
-        for _, key := range []string{"data", "result", "results", "items", "list"} {
+        // Pass 1: try a few well-known envelope keys first (preserves intent).
+        for _, key := range []string{"data", "result", "results", "items", "list", "groups", "classes", "students", "options", "days"} {
                 if raw, ok := wrapper[key]; ok {
-                        // Check if the value is an array
                         t := bytes.TrimLeft(raw, " \t\r\n")
                         if len(t) > 0 && t[0] == '[' {
                                 return raw
                         }
                 }
         }
+
+        // Pass 2: scan ALL remaining keys for any value that's a JSON array.
+        for _, raw := range wrapper {
+                t := bytes.TrimLeft(raw, " \t\r\n")
+                if len(t) > 0 && t[0] == '[' {
+                        return raw
+                }
+        }
+
+        // Pass 3: recurse one level into nested objects (e.g. {"result":{"groups":[...]}}).
+        for _, raw := range wrapper {
+                t := bytes.TrimLeft(raw, " \t\r\n")
+                if len(t) > 0 && t[0] == '{' {
+                        if inner := unwrapResponse(raw); len(inner) > 0 {
+                                it := bytes.TrimLeft(inner, " \t\r\n")
+                                if len(it) > 0 && it[0] == '[' {
+                                        return inner
+                                }
+                        }
+                }
+        }
+
         return respBody
+}
+
+// truncateForError returns up to n bytes of body, safe-printable, for inclusion
+// in error messages so the user (and developer) can see what the server
+// actually returned when unmarshal fails.
+func truncateForError(body []byte, n int) string {
+        if len(body) <= n {
+                return string(body)
+        }
+        return string(body[:n]) + "...(truncated)"
 }
 
 // GetMyClassGroups fetches the list of class groups for the diary.
@@ -778,7 +816,8 @@ func (c *EdonishClient) GetMyClassGroups() ([]MyClassGroup, error) {
 
         var groups []MyClassGroup
         if err := json.Unmarshal(unwrapResponse(respBody), &groups); err != nil {
-                return nil, err
+                return nil, fmt.Errorf("не удалось разобрать список классов: %v (ответ сервера: %s)",
+                        err, truncateForError(respBody, 300))
         }
         return groups, nil
 }
@@ -804,7 +843,8 @@ func (c *EdonishClient) GetMyClassStudents(groupID int) ([]MyClassStudent, error
 
         var students []MyClassStudent
         if err := json.Unmarshal(unwrapResponse(respBody), &students); err != nil {
-                return nil, err
+                return nil, fmt.Errorf("не удалось разобрать список учеников: %v (ответ сервера: %s)",
+                        err, truncateForError(respBody, 300))
         }
         return students, nil
 }
@@ -827,7 +867,8 @@ func (c *EdonishClient) GetDiaryBehaviorOptions() ([]DiaryBehaviorOption, error)
 
         var options []DiaryBehaviorOption
         if err := json.Unmarshal(unwrapResponse(respBody), &options); err != nil {
-                return nil, err
+                return nil, fmt.Errorf("не удалось разобрать варианты поведения: %v (ответ сервера: %s)",
+                        err, truncateForError(respBody, 300))
         }
         return options, nil
 }
