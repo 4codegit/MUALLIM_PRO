@@ -904,28 +904,28 @@ func (c *EdonishClient) GetDiaryData(groupID, studentID int, startDate, endDate 
 }
 
 // SignDiary signs the diary for a student with a specific behavior in a date range.
-// Uses POST /myclass/student/diary/signature
+// Uses POST /myclass/student/diary/signature?behavior_id=...&start_date=...&end_date=...&student_id=...&school_id=...
 //
-// IMPORTANT field-name history:
-//   - v5.4.0–v5.4.9 sent params as ?student_id=... which the server silently
-//     ignored (returned 200 OK but didn't sign anything). The /myclass API
-//     consistently uses `school_student_id` for the same ID (see GetDiaryData).
-//   - v5.5.0: switched to `school_student_id` in both query string AND JSON
-//     body, and always sends behavior_id (even 0 means "no diligence set").
+// Field-name notes (history):
+//   - v5.4.0–v5.4.9: used `student_id` query param + no body. Server
+//     returned 200 OK but didn't actually sign — silent failure.
+//   - v5.5.0: switched to `school_student_id` + JSON body. Server started
+//     returning 4xx errors on every request — body was rejected.
+//   - v5.5.1: reverted to `student_id` query param (server clearly accepts
+//     it based on the 2xx response in v5.4.x) + no JSON body. Always
+//     sends `behavior_id` (was conditional before). The v5.4.9 silent-
+//     failure root cause was likely the missing `behavior_id` when
+//     behaviorID==0; now we always send it.
 //
-// The server has historically been picky: some endpoints read from query
-// params, others from JSON body, some from both. We send BOTH to be safe —
-// the server picks whichever its parser recognises and ignores the rest.
-//
-// Returns an error only on HTTP-level failure (4xx/5xx). A successful 2xx
-// response means the signature was recorded.
+// If this still doesn't save, the issue is likely elsewhere (date format,
+// locked past dates, or the server requires a different parameter set).
+// In that case check the response body in the error message.
 func (c *EdonishClient) SignDiary(studentID, behaviorID int, startDate, endDate string) error {
-        // Query-string form
         params := map[string]string{
-                "school_student_id": strconv.Itoa(studentID),
-                "start_date":        startDate,
-                "end_date":          endDate,
-                "behavior_id":       strconv.Itoa(behaviorID),
+                "student_id":  strconv.Itoa(studentID),
+                "start_date":  startDate,
+                "end_date":    endDate,
+                "behavior_id": strconv.Itoa(behaviorID),
         }
         u := c.buildURL("/myclass/student/diary/signature", params)
         req, err := http.NewRequest("POST", u, nil)
@@ -933,20 +933,9 @@ func (c *EdonishClient) SignDiary(studentID, behaviorID int, startDate, endDate 
                 return err
         }
 
-        // Also send a JSON body — many edonish POST endpoints read from body
-        // and ignore query params. We send all three plausible field-name
-        // variants of the student ID (school_student_id, student_id, id) so
-        // whichever the server's parser looks at, it finds a value.
-        body := map[string]interface{}{
-                "school_student_id": studentID,
-                "student_id":        studentID,
-                "id":                studentID,
-                "behavior_id":       behaviorID,
-                "start_date":        startDate,
-                "end_date":          endDate,
-        }
-
-        _, _, err = c.doRequest(req, body)
+        // No JSON body — this endpoint expects empty body + query params only.
+        // Sending a body caused 4xx errors in v5.5.0.
+        _, _, err = c.doRequest(req, nil)
         return err
 }
 
