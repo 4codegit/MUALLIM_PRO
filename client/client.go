@@ -698,12 +698,53 @@ type MyClassGroup struct {
 }
 
 // MyClassStudent represents a student from the /myclass/students API.
+//
+// The server response includes multiple IDs because /myclass is a
+// "parent portal" view that links students across several DB tables.
+// We capture all of them so callers can pick the right one for each
+// downstream API:
+//   - ID            : the /myclass internal row id (used for /myclass/* URLs)
+//   - StudentID     : the journal student id (matches Student.StudentID
+//                     from /journal/students — used by /journal/* APIs)
+//   - SchoolStudentID: yet another id (used by some /myclass/* endpoints)
+//
+// The diary signature endpoint specifically requires the value that
+// satisfies the diary_signature_student_id_fkey constraint, which is
+// the journal StudentID, NOT the /myclass ID. Passing the wrong one
+// triggers HTTP 409 with the FK violation error.
 type MyClassStudent struct {
-        ID        int    `json:"id"`
-        LastName  string `json:"lastName"`
-        FirstName string `json:"firstName"`
-        GroupID   int    `json:"groupId"`
-        GroupName string `json:"groupName"`
+        ID              int    `json:"id"`
+        StudentID       int    `json:"studentId"`
+        SchoolStudentID int    `json:"schoolStudentId"`
+        UserID          int    `json:"userId"`
+        LastName        string `json:"lastName"`
+        FirstName       string `json:"firstName"`
+        GroupID         int    `json:"groupId"`
+        GroupName       string `json:"groupName"`
+}
+
+// DiarySignStudentID returns the student ID to use for the
+// /myclass/student/diary/signature endpoint. This is the journal-side
+// student id (StudentID) — NOT the /myclass internal ID.
+//
+// Why: the server's diary_signature table has a FK constraint
+// diary_signature_student_id_fkey that references the student table
+// (journal side). Sending the /myclass internal ID causes:
+//   409: insert or update on table "diary_signature" violates foreign
+//   key constraint "diary_signature_student_id_fkey"
+//
+// Fallback chain (first non-zero wins):
+//  1. StudentID       — most likely correct (journal-side id)
+//  2. SchoolStudentID — alternative name for the same id
+//  3. ID              — last resort (/myclass internal id)
+func (s MyClassStudent) DiarySignStudentID() int {
+        if s.StudentID > 0 {
+                return s.StudentID
+        }
+        if s.SchoolStudentID > 0 {
+                return s.SchoolStudentID
+        }
+        return s.ID
 }
 
 // DiaryBehaviorOption represents a behavior/diligence option for diary signatures.
