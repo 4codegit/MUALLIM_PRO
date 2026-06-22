@@ -486,15 +486,15 @@ func (dt *DiariesTab) executeDiligenceFill(studentIdx, comboIdx int) {
 
         if len(combo.Diligences) == 1 {
                 // Single behavior: sign week by week
-                dt.signWeeks(apiClient, student.ID, behaviorIDs[0], today, &successCount, &failCount, &firstErr)
+                dt.signWeeks(apiClient, student.DiarySignStudentID(), behaviorIDs[0], today, &successCount, &failCount, &firstErr)
         } else {
                 // Mixed behavior: sign day by day with random behavior from pool
-                dt.signDays(apiClient, student.ID, behaviorIDs, today, &successCount, &failCount, &firstErr)
+                dt.signDays(apiClient, student.DiarySignStudentID(), behaviorIDs, today, &successCount, &failCount, &firstErr)
         }
 
         fyne.Do(func() {
-                msg := fmt.Sprintf("Готово: %d подписей для %s %s (ошибок: %d)",
-                        successCount, student.LastName, student.FirstName, failCount)
+                msg := fmt.Sprintf("Готово: %d подписей для %s %s (ошибок: %d) [studentID=%d]",
+                        successCount, student.LastName, student.FirstName, failCount, student.DiarySignStudentID())
                 if failCount > 0 && firstErr != "" {
                         // Truncate long error messages so the status bar stays readable
                         shortErr := firstErr
