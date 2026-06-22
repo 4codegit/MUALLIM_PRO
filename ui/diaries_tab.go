@@ -482,23 +482,33 @@ func (dt *DiariesTab) executeDiligenceFill(studentIdx, comboIdx int) {
 
         successCount := 0
         failCount := 0
+        var firstErr string // first error message — shown in status so user can debug
 
         if len(combo.Diligences) == 1 {
                 // Single behavior: sign week by week
-                dt.signWeeks(apiClient, student.ID, behaviorIDs[0], today, &successCount, &failCount)
+                dt.signWeeks(apiClient, student.ID, behaviorIDs[0], today, &successCount, &failCount, &firstErr)
         } else {
                 // Mixed behavior: sign day by day with random behavior from pool
-                dt.signDays(apiClient, student.ID, behaviorIDs, today, &successCount, &failCount)
+                dt.signDays(apiClient, student.ID, behaviorIDs, today, &successCount, &failCount, &firstErr)
         }
 
         fyne.Do(func() {
-                dt.statusLabel.SetText(fmt.Sprintf("Готово: %d подписей для %s %s (ошибок: %d)",
-                        successCount, student.LastName, student.FirstName, failCount))
+                msg := fmt.Sprintf("Готово: %d подписей для %s %s (ошибок: %d)",
+                        successCount, student.LastName, student.FirstName, failCount)
+                if failCount > 0 && firstErr != "" {
+                        // Truncate long error messages so the status bar stays readable
+                        shortErr := firstErr
+                        if len(shortErr) > 200 {
+                                shortErr = shortErr[:200] + "..."
+                        }
+                        msg += "\nПервая ошибка: " + shortErr
+                }
+                dt.statusLabel.SetText(msg)
         })
 }
 
 // signWeeks signs diary weeks from the quarter start to today with a single behavior.
-func (dt *DiariesTab) signWeeks(apiClient *client.EdonishClient, studentID, behaviorID int, today time.Time, successCount, failCount *int) {
+func (dt *DiariesTab) signWeeks(apiClient *client.EdonishClient, studentID, behaviorID int, today time.Time, successCount, failCount *int, firstErr *string) {
         // Calculate weeks from September 1 of the current school year to today
         startDate := dt.getSchoolYearStart(today)
         weekStart := startDate
@@ -521,6 +531,9 @@ func (dt *DiariesTab) signWeeks(apiClient *client.EdonishClient, studentID, beha
                 )
                 if err != nil {
                         *failCount++
+                        if *firstErr == "" {
+                                *firstErr = err.Error()
+                        }
                 } else {
                         *successCount++
                 }
@@ -531,7 +544,7 @@ func (dt *DiariesTab) signWeeks(apiClient *client.EdonishClient, studentID, beha
 }
 
 // signDays signs diary entries day by day with random behaviors from the pool.
-func (dt *DiariesTab) signDays(apiClient *client.EdonishClient, studentID int, behaviorIDs []int, today time.Time, successCount, failCount *int) {
+func (dt *DiariesTab) signDays(apiClient *client.EdonishClient, studentID int, behaviorIDs []int, today time.Time, successCount, failCount *int, firstErr *string) {
         startDate := dt.getSchoolYearStart(today)
         current := startDate
 
@@ -555,6 +568,9 @@ func (dt *DiariesTab) signDays(apiClient *client.EdonishClient, studentID int, b
                 err := apiClient.SignDiary(studentID, chosenID, dateStr, dateStr)
                 if err != nil {
                         *failCount++
+                        if *firstErr == "" {
+                                *firstErr = err.Error()
+                        }
                 } else {
                         *successCount++
                 }
