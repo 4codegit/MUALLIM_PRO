@@ -484,17 +484,28 @@ func (dt *DiariesTab) executeDiligenceFill(studentIdx, comboIdx int) {
         failCount := 0
         var firstErr string // first error message — shown in status so user can debug
 
+        // SignDiary needs BOTH student ids + group_id:
+        //   - student.StudentID  (journal id) — satisfies diary_signature.student_id FK
+        //   - student.ID         (myclass id) — matches how GetDiaryData finds the diary
+        //   - dt.selectedGroup.ID — was MISSING in v5.4.x–v5.5.2; server couldn't
+        //                            locate source diary-day rows to sign
+        groupID := 0
+        if dt.selectedGroup != nil {
+                groupID = dt.selectedGroup.ID
+        }
+
         if len(combo.Diligences) == 1 {
                 // Single behavior: sign week by week
-                dt.signWeeks(apiClient, student.DiarySignStudentID(), behaviorIDs[0], today, &successCount, &failCount, &firstErr)
+                dt.signWeeks(apiClient, student.StudentID, student.ID, groupID, behaviorIDs[0], today, &successCount, &failCount, &firstErr)
         } else {
                 // Mixed behavior: sign day by day with random behavior from pool
-                dt.signDays(apiClient, student.DiarySignStudentID(), behaviorIDs, today, &successCount, &failCount, &firstErr)
+                dt.signDays(apiClient, student.StudentID, student.ID, groupID, behaviorIDs, today, &successCount, &failCount, &firstErr)
         }
 
         fyne.Do(func() {
-                msg := fmt.Sprintf("Готово: %d подписей для %s %s (ошибок: %d) [studentID=%d]",
-                        successCount, student.LastName, student.FirstName, failCount, student.DiarySignStudentID())
+                msg := fmt.Sprintf("Готово: %d подписей для %s %s (ошибок: %d) [studentID=%d schoolStudentID=%d groupID=%d]",
+                        successCount, student.LastName, student.FirstName, failCount,
+                        student.StudentID, student.ID, groupID)
                 if failCount > 0 && firstErr != "" {
                         // Truncate long error messages so the status bar stays readable
                         shortErr := firstErr
@@ -508,7 +519,7 @@ func (dt *DiariesTab) executeDiligenceFill(studentIdx, comboIdx int) {
 }
 
 // signWeeks signs diary weeks from the quarter start to today with a single behavior.
-func (dt *DiariesTab) signWeeks(apiClient *client.EdonishClient, studentID, behaviorID int, today time.Time, successCount, failCount *int, firstErr *string) {
+func (dt *DiariesTab) signWeeks(apiClient *client.EdonishClient, studentID, schoolStudentID, groupID, behaviorID int, today time.Time, successCount, failCount *int, firstErr *string) {
         // Calculate weeks from September 1 of the current school year to today
         startDate := dt.getSchoolYearStart(today)
         weekStart := startDate
@@ -525,7 +536,7 @@ func (dt *DiariesTab) signWeeks(apiClient *client.EdonishClient, studentID, beha
                                 weekStart.Format("02.01"), weekEnd.Format("02.01"), *successCount+1))
                 })
 
-                err := apiClient.SignDiary(studentID, behaviorID,
+                err := apiClient.SignDiary(studentID, schoolStudentID, groupID, behaviorID,
                         weekStart.Format("2006-01-02"),
                         weekEnd.Format("2006-01-02"),
                 )
@@ -544,7 +555,7 @@ func (dt *DiariesTab) signWeeks(apiClient *client.EdonishClient, studentID, beha
 }
 
 // signDays signs diary entries day by day with random behaviors from the pool.
-func (dt *DiariesTab) signDays(apiClient *client.EdonishClient, studentID int, behaviorIDs []int, today time.Time, successCount, failCount *int, firstErr *string) {
+func (dt *DiariesTab) signDays(apiClient *client.EdonishClient, studentID, schoolStudentID, groupID int, behaviorIDs []int, today time.Time, successCount, failCount *int, firstErr *string) {
         startDate := dt.getSchoolYearStart(today)
         current := startDate
 
@@ -565,7 +576,7 @@ func (dt *DiariesTab) signDays(apiClient *client.EdonishClient, studentID int, b
                 })
 
                 dateStr := current.Format("2006-01-02")
-                err := apiClient.SignDiary(studentID, chosenID, dateStr, dateStr)
+                err := apiClient.SignDiary(studentID, schoolStudentID, groupID, chosenID, dateStr, dateStr)
                 if err != nil {
                         *failCount++
                         if *firstErr == "" {
