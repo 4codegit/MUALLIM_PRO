@@ -945,28 +945,36 @@ func (c *EdonishClient) GetDiaryData(groupID, studentID int, startDate, endDate 
 }
 
 // SignDiary signs the diary for a student with a specific behavior in a date range.
-// Uses POST /myclass/student/diary/signature?behavior_id=...&start_date=...&end_date=...&student_id=...&school_id=...
+// Uses POST /myclass/student/diary/signature
 //
-// Field-name notes (history):
-//   - v5.4.0–v5.4.9: used `student_id` query param + no body. Server
-//     returned 200 OK but didn't actually sign — silent failure.
-//   - v5.5.0: switched to `school_student_id` + JSON body. Server started
-//     returning 4xx errors on every request — body was rejected.
-//   - v5.5.1: reverted to `student_id` query param (server clearly accepts
-//     it based on the 2xx response in v5.4.x) + no JSON body. Always
-//     sends `behavior_id` (was conditional before). The v5.4.9 silent-
-//     failure root cause was likely the missing `behavior_id` when
-//     behaviorID==0; now we always send it.
+// Parameter discovery (v5.5.3):
+//   - GetDiaryData (works for fetching) uses school_student_id + group_id.
+//   - SignDiary previously sent only student_id (FK column name) — server
+//     couldn't locate source diary-day rows to sign → 200 OK silent no-op.
+//   - Fix: send BOTH identifiers + group_id so the server's lookup matches
+//     the same rows GET finds, AND the INSERT side satisfies the FK.
 //
-// If this still doesn't save, the issue is likely elsewhere (date format,
-// locked past dates, or the server requires a different parameter set).
-// In that case check the response body in the error message.
-func (c *EdonishClient) SignDiary(studentID, behaviorID int, startDate, endDate string) error {
+// All params go in the query string (no JSON body — v5.5.0 proved body
+// is rejected by this endpoint with 4xx).
+//
+// Param semantics:
+//   - studentID       : journal-side student id (Student.StudentID) —
+//                       satisfies diary_signature.student_id FK constraint
+//   - schoolStudentID : /myclass-side student id (MyClassStudent.ID) —
+//                       matches how GetDiaryData identifies the diary
+//   - groupID         : the class group id (JournalGroup.ID / MyClassGroup.ID) —
+//                       was MISSING in v5.4.x–v5.5.2; almost certainly
+//                       the actual silent-fail cause
+//   - behaviorID      : diligence option id from GetDiaryBehaviorOptions
+//   - startDate/endDate: "YYYY-MM-DD" range to sign
+func (c *EdonishClient) SignDiary(studentID, schoolStudentID, groupID, behaviorID int, startDate, endDate string) error {
         params := map[string]string{
-                "student_id":  strconv.Itoa(studentID),
-                "start_date":  startDate,
-                "end_date":    endDate,
-                "behavior_id": strconv.Itoa(behaviorID),
+                "student_id":        strconv.Itoa(studentID),
+                "school_student_id": strconv.Itoa(schoolStudentID),
+                "group_id":          strconv.Itoa(groupID),
+                "behavior_id":       strconv.Itoa(behaviorID),
+                "start_date":        startDate,
+                "end_date":          endDate,
         }
         u := c.buildURL("/myclass/student/diary/signature", params)
         req, err := http.NewRequest("POST", u, nil)
