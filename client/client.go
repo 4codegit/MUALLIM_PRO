@@ -904,25 +904,49 @@ func (c *EdonishClient) GetDiaryData(groupID, studentID int, startDate, endDate 
 }
 
 // SignDiary signs the diary for a student with a specific behavior in a date range.
-// Uses POST /myclass/student/diary/signature?behavior_id=...&start_date=...&end_date=...&student_id=...&school_id=...
-// If behaviorID is 0, it signs without setting a behavior.
+// Uses POST /myclass/student/diary/signature
+//
+// IMPORTANT field-name history:
+//   - v5.4.0–v5.4.9 sent params as ?student_id=... which the server silently
+//     ignored (returned 200 OK but didn't sign anything). The /myclass API
+//     consistently uses `school_student_id` for the same ID (see GetDiaryData).
+//   - v5.5.0: switched to `school_student_id` in both query string AND JSON
+//     body, and always sends behavior_id (even 0 means "no diligence set").
+//
+// The server has historically been picky: some endpoints read from query
+// params, others from JSON body, some from both. We send BOTH to be safe —
+// the server picks whichever its parser recognises and ignores the rest.
+//
+// Returns an error only on HTTP-level failure (4xx/5xx). A successful 2xx
+// response means the signature was recorded.
 func (c *EdonishClient) SignDiary(studentID, behaviorID int, startDate, endDate string) error {
+        // Query-string form
         params := map[string]string{
-                "student_id": strconv.Itoa(studentID),
-                "start_date": startDate,
-                "end_date":   endDate,
+                "school_student_id": strconv.Itoa(studentID),
+                "start_date":        startDate,
+                "end_date":          endDate,
+                "behavior_id":       strconv.Itoa(behaviorID),
         }
-        if behaviorID > 0 {
-                params["behavior_id"] = strconv.Itoa(behaviorID)
-        }
-
         u := c.buildURL("/myclass/student/diary/signature", params)
         req, err := http.NewRequest("POST", u, nil)
         if err != nil {
                 return err
         }
 
-        _, _, err = c.doRequest(req, nil)
+        // Also send a JSON body — many edonish POST endpoints read from body
+        // and ignore query params. We send all three plausible field-name
+        // variants of the student ID (school_student_id, student_id, id) so
+        // whichever the server's parser looks at, it finds a value.
+        body := map[string]interface{}{
+                "school_student_id": studentID,
+                "student_id":        studentID,
+                "id":                studentID,
+                "behavior_id":       behaviorID,
+                "start_date":        startDate,
+                "end_date":          endDate,
+        }
+
+        _, _, err = c.doRequest(req, body)
         return err
 }
 
