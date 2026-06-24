@@ -968,22 +968,18 @@ func (c *EdonishClient) GetDiaryData(groupID, studentID int, startDate, endDate 
 }
 
 // SignDiary signs the diary for a student with a specific behavior in a date range.
-// Uses POST /myclass/student/diary/signature
+// Uses POST /myclass/student/diary/signature with query-string params.
 //
-// v5.5.4 — response validation + form-urlencoded fallback:
-//   - The server was returning 200 OK even when 0 rows were signed (silent no-op).
-//   - Previous code discarded the response body, so it couldn't detect this.
-//   - Now we capture the response and validate it contains actual data.
-//   - If query-param approach returns empty/suspicious response, we retry
-//     with application/x-www-form-urlencoded body (some server versions
-//     expect params in the body, not the URL).
+// v5.5.5 — simplified after real server response analysis:
+//   The server returns {"message":"Signature updated","statusCode":0} on success.
+//   Previous v5.5.4 had an overly aggressive isSignDiaryResponseEmpty that treated
+//   any body containing "message" as suspicious, triggering a form-urlencoded
+//   fallback that always returns 422. Removed the fallback; query-params work.
 //
 // Param semantics:
-//   - studentID       : journal-side student id (Student.StudentID) —
-//                       satisfies diary_signature.student_id FK constraint
-//   - schoolStudentID : /myclass-side student id — use MyClassStudent.DiarySchoolStudentID()
-//                       to get the correct value (prefers SchoolStudentID over ID)
-//   - groupID         : the class group id (JournalGroup.ID / MyClassGroup.ID)
+//   - studentID       : journal-side student id (Student.StudentID)
+//   - schoolStudentID : /myclass-side id — use MyClassStudent.DiarySchoolStudentID()
+//   - groupID         : the class group id
 //   - behaviorID      : diligence option id from GetDiaryBehaviorOptions
 //   - startDate/endDate: "YYYY-MM-DD" range to sign
 func (c *EdonishClient) SignDiary(studentID, schoolStudentID, groupID, behaviorID int, startDate, endDate string) error {
@@ -996,7 +992,6 @@ func (c *EdonishClient) SignDiary(studentID, schoolStudentID, groupID, behaviorI
                 "end_date":          endDate,
         }
 
-        // --- Attempt 1: query-string params (original approach) ---
         u := c.buildURL("/myclass/student/diary/signature", params)
         req, err := http.NewRequest("POST", u, nil)
         if err != nil {
@@ -1008,94 +1003,24 @@ func (c *EdonishClient) SignDiary(studentID, schoolStudentID, groupID, behaviorI
                 return err
         }
 
-        // Log the response for diagnostics (always — this is the only way to
-        // understand why signatures silently fail).
-        bodyStr := string(respBody)
-        log.Printf("[SignDiary] query-params → HTTP %d, body=%q", statusCode, truncateForError(respBody, 500))
+        // Log the response for diagnostics.
+        log.Printf("[SignDiary] HTTP %d, body=%q", statusCode, truncateForError(respBody, 500))
 
-        // Validate: if the response is empty or contains error indicators,
-        // the server likely didn't create any signatures.
-        if c.isSignDiaryResponseEmpty(bodyStr) {
-                // --- Attempt 2: form-urlencoded body (alternative format) ---
-                log.Printf("[SignDiary] empty response with query params, retrying with form-urlencoded body...")
-                formData := url.Values{}
-                for k, v := range params {
-                        formData.Set(k, v)
-                }
-                encodedBody := formData.Encode()
-
-                u2 := c.buildURL("/myclass/student/diary/signature", nil)
-                req2, err := http.NewRequest("POST", u2, strings.NewReader(encodedBody))
-                if err != nil {
-                        return fmt.Errorf("query-params дал пустой ответ, form-urlencoded ошибка: %v", err)
-                }
-                req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-                req2.Header.Set("Content-Length", strconv.Itoa(len(encodedBody)))
-
-                respBody2, statusCode2, err2 := c.doRequestRaw(req2)
-                bodyStr2 := string(respBody2)
-                log.Printf("[SignDiary] form-body → HTTP %d, body=%q", statusCode2, truncateForError(respBody2, 500))
-
-                if err2 != nil {
-                        return fmt.Errorf("оба формата не сработали. query: HTTP %d «%s», form: %v",
-                                statusCode, truncateForError(respBody, 200), err2)
-                }
-                if c.isSignDiaryResponseEmpty(bodyStr2) {
-                        return fmt.Errorf("сервер вернул пустой ответ (подписи не созданы). HTTP %d, body: «%s»",
-                                statusCode2, truncateForError(respBody2, 300))
-                }
+        // Validate: the server returns 200 with a body on success.
+        // Known success responses:
+        //   {"message":"Signature updated","statusCode":0}
+        //   {"message":"Signature updated","statusCode":0,"count":5}
+        // Known failure (silent no-op):
+        //   empty body, "null", "{}", {"data":null}, {"data":[]}
+        bodyStr := strings.TrimSpace(string(respBody))
+        if bodyStr == "" || bodyStr == "null" || bodyStr == "{}" ||
+                bodyStr == "{\"data\":null}" || bodyStr == "{\"data\":[]}" ||
+                bodyStr == "[]" || bodyStr == "0" {
+                return fmt.Errorf("сервер вернул пустой ответ (подписи не созданы). HTTP %d, body: «%s»",
+                        statusCode, truncateForError(respBody, 300))
         }
 
         return nil
-}
-
-// doRequestRaw performs a request WITHOUT auto-retrying on 401/403 and WITHOUT
-// setting Content-Type. Used when we need full control over headers.
-func (c *EdonishClient) doRequestRaw(req *http.Request) ([]byte, int, error) {
-        if req.Header.Get("Authorization") == "" && c.JWTToken != "" {
-                req.Header.Set("Authorization", "Bearer "+c.JWTToken)
-        }
-
-        resp, err := c.httpClient.Do(req)
-        if err != nil {
-                return nil, 0, err
-        }
-        defer resp.Body.Close()
-
-        respBody, err := io.ReadAll(resp.Body)
-        if err != nil {
-                return nil, resp.StatusCode, err
-        }
-
-        if resp.StatusCode >= 400 {
-                return respBody, resp.StatusCode, fmt.Errorf("сервер вернул ошибку (код %d): %s", resp.StatusCode, string(respBody))
-        }
-
-        return respBody, resp.StatusCode, nil
-}
-
-// isSignDiaryResponseEmpty checks whether the server response indicates
-// that no signatures were actually created. The edonish.tj server returns
-// 200 OK even on silent no-op, so we must inspect the body.
-func (c *EdonishClient) isSignDiaryResponseEmpty(body string) bool {
-        trimmed := strings.TrimSpace(body)
-        // Empty body → definitely no signatures
-        if trimmed == "" || trimmed == "null" || trimmed == "{}" {
-                return true
-        }
-        // Body contains an error message
-        lower := strings.ToLower(trimmed)
-        if strings.Contains(lower, "\"error\"") || strings.Contains(lower, "\"message\"") {
-                // Check if it looks like an error response, not a success with count
-                if !strings.Contains(lower, "\"count\"") && !strings.Contains(lower, "\"id\"") && !strings.Contains(lower, "\"success\"") {
-                        return true
-                }
-        }
-        // Response is just "0" or a zero count
-        if trimmed == "0" || trimmed == "[]" || trimmed == "{\"data\":null}" || trimmed == "{\"data\":[]}" {
-                return true
-        }
-        return false
 }
 
 // --- Final Grades methods ---
