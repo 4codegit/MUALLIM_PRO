@@ -485,27 +485,29 @@ func (dt *DiariesTab) executeDiligenceFill(studentIdx, comboIdx int) {
         var firstErr string // first error message — shown in status so user can debug
 
         // SignDiary needs BOTH student ids + group_id:
-        //   - student.StudentID  (journal id) — satisfies diary_signature.student_id FK
-        //   - student.ID         (myclass id) — matches how GetDiaryData finds the diary
-        //   - dt.selectedGroup.ID — was MISSING in v5.4.x–v5.5.2; server couldn't
-        //                            locate source diary-day rows to sign
+        //   - student.StudentID           (journal id) — satisfies diary_signature.student_id FK
+        //   - student.DiarySchoolStudentID() — the correct /myclass-side id
+        //     (prefers SchoolStudentID over ID, because /myclass/students may
+        //      not return the "id" field, leaving student.ID == 0)
+        //   - dt.selectedGroup.ID          — the class group id
         groupID := 0
         if dt.selectedGroup != nil {
                 groupID = dt.selectedGroup.ID
         }
+        schoolStID := student.DiarySchoolStudentID()
 
         if len(combo.Diligences) == 1 {
                 // Single behavior: sign week by week
-                dt.signWeeks(apiClient, student.StudentID, student.ID, groupID, behaviorIDs[0], today, &successCount, &failCount, &firstErr)
+                dt.signWeeks(apiClient, student.StudentID, schoolStID, groupID, behaviorIDs[0], today, &successCount, &failCount, &firstErr)
         } else {
                 // Mixed behavior: sign day by day with random behavior from pool
-                dt.signDays(apiClient, student.StudentID, student.ID, groupID, behaviorIDs, today, &successCount, &failCount, &firstErr)
+                dt.signDays(apiClient, student.StudentID, schoolStID, groupID, behaviorIDs, today, &successCount, &failCount, &firstErr)
         }
 
         fyne.Do(func() {
-                msg := fmt.Sprintf("Готово: %d подписей для %s %s (ошибок: %d) [studentID=%d schoolStudentID=%d groupID=%d]",
+                msg := fmt.Sprintf("Готово: %d подписей для %s %s (ошибок: %d) [studentID=%d schoolStudentID=%d myclassID=%d groupID=%d]",
                         successCount, student.LastName, student.FirstName, failCount,
-                        student.StudentID, student.ID, groupID)
+                        student.StudentID, student.SchoolStudentID, student.ID, groupID)
                 if failCount > 0 && firstErr != "" {
                         // Truncate long error messages so the status bar stays readable
                         shortErr := firstErr

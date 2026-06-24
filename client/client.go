@@ -6,9 +6,11 @@ import (
         "encoding/json"
         "fmt"
         "io"
+        "log"
         "net/http"
         "net/url"
         "strconv"
+        "strings"
         "time"
 )
 
@@ -747,6 +749,27 @@ func (s MyClassStudent) DiarySignStudentID() int {
         return s.ID
 }
 
+// DiarySchoolStudentID returns the student ID to use for the
+// school_student_id query parameter in /myclass/* endpoints.
+// This is the ID the server uses to locate diary-day rows.
+//
+// The /myclass/students API may NOT return the "id" field (it can be 0),
+// so we must prefer SchoolStudentID over ID.
+//
+// Fallback chain (first non-zero wins):
+//  1. SchoolStudentID — the school_student_id from the API response
+//  2. ID              — the /myclass internal row id
+//  3. StudentID       — last resort (journal-side id)
+func (s MyClassStudent) DiarySchoolStudentID() int {
+        if s.SchoolStudentID > 0 {
+                return s.SchoolStudentID
+        }
+        if s.ID > 0 {
+                return s.ID
+        }
+        return s.StudentID
+}
+
 // DiaryBehaviorOption represents a behavior/diligence option for diary signatures.
 type DiaryBehaviorOption struct {
         ID    int    `json:"id"`
@@ -947,24 +970,20 @@ func (c *EdonishClient) GetDiaryData(groupID, studentID int, startDate, endDate 
 // SignDiary signs the diary for a student with a specific behavior in a date range.
 // Uses POST /myclass/student/diary/signature
 //
-// Parameter discovery (v5.5.3):
-//   - GetDiaryData (works for fetching) uses school_student_id + group_id.
-//   - SignDiary previously sent only student_id (FK column name) — server
-//     couldn't locate source diary-day rows to sign → 200 OK silent no-op.
-//   - Fix: send BOTH identifiers + group_id so the server's lookup matches
-//     the same rows GET finds, AND the INSERT side satisfies the FK.
-//
-// All params go in the query string (no JSON body — v5.5.0 proved body
-// is rejected by this endpoint with 4xx).
+// v5.5.4 — response validation + form-urlencoded fallback:
+//   - The server was returning 200 OK even when 0 rows were signed (silent no-op).
+//   - Previous code discarded the response body, so it couldn't detect this.
+//   - Now we capture the response and validate it contains actual data.
+//   - If query-param approach returns empty/suspicious response, we retry
+//     with application/x-www-form-urlencoded body (some server versions
+//     expect params in the body, not the URL).
 //
 // Param semantics:
 //   - studentID       : journal-side student id (Student.StudentID) —
 //                       satisfies diary_signature.student_id FK constraint
-//   - schoolStudentID : /myclass-side student id (MyClassStudent.ID) —
-//                       matches how GetDiaryData identifies the diary
-//   - groupID         : the class group id (JournalGroup.ID / MyClassGroup.ID) —
-//                       was MISSING in v5.4.x–v5.5.2; almost certainly
-//                       the actual silent-fail cause
+//   - schoolStudentID : /myclass-side student id — use MyClassStudent.DiarySchoolStudentID()
+//                       to get the correct value (prefers SchoolStudentID over ID)
+//   - groupID         : the class group id (JournalGroup.ID / MyClassGroup.ID)
 //   - behaviorID      : diligence option id from GetDiaryBehaviorOptions
 //   - startDate/endDate: "YYYY-MM-DD" range to sign
 func (c *EdonishClient) SignDiary(studentID, schoolStudentID, groupID, behaviorID int, startDate, endDate string) error {
@@ -976,16 +995,107 @@ func (c *EdonishClient) SignDiary(studentID, schoolStudentID, groupID, behaviorI
                 "start_date":        startDate,
                 "end_date":          endDate,
         }
+
+        // --- Attempt 1: query-string params (original approach) ---
         u := c.buildURL("/myclass/student/diary/signature", params)
         req, err := http.NewRequest("POST", u, nil)
         if err != nil {
                 return err
         }
 
-        // No JSON body — this endpoint expects empty body + query params only.
-        // Sending a body caused 4xx errors in v5.5.0.
-        _, _, err = c.doRequest(req, nil)
-        return err
+        respBody, statusCode, err := c.doRequest(req, nil)
+        if err != nil {
+                return err
+        }
+
+        // Log the response for diagnostics (always — this is the only way to
+        // understand why signatures silently fail).
+        bodyStr := string(respBody)
+        log.Printf("[SignDiary] query-params → HTTP %d, body=%q", statusCode, truncateForError(respBody, 500))
+
+        // Validate: if the response is empty or contains error indicators,
+        // the server likely didn't create any signatures.
+        if c.isSignDiaryResponseEmpty(bodyStr) {
+                // --- Attempt 2: form-urlencoded body (alternative format) ---
+                log.Printf("[SignDiary] empty response with query params, retrying with form-urlencoded body...")
+                formData := url.Values{}
+                for k, v := range params {
+                        formData.Set(k, v)
+                }
+                encodedBody := formData.Encode()
+
+                u2 := c.buildURL("/myclass/student/diary/signature", nil)
+                req2, err := http.NewRequest("POST", u2, strings.NewReader(encodedBody))
+                if err != nil {
+                        return fmt.Errorf("query-params дал пустой ответ, form-urlencoded ошибка: %v", err)
+                }
+                req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+                req2.Header.Set("Content-Length", strconv.Itoa(len(encodedBody)))
+
+                respBody2, statusCode2, err2 := c.doRequestRaw(req2)
+                bodyStr2 := string(respBody2)
+                log.Printf("[SignDiary] form-body → HTTP %d, body=%q", statusCode2, truncateForError(respBody2, 500))
+
+                if err2 != nil {
+                        return fmt.Errorf("оба формата не сработали. query: HTTP %d «%s», form: %v",
+                                statusCode, truncateForError(respBody, 200), err2)
+                }
+                if c.isSignDiaryResponseEmpty(bodyStr2) {
+                        return fmt.Errorf("сервер вернул пустой ответ (подписи не созданы). HTTP %d, body: «%s»",
+                                statusCode2, truncateForError(respBody2, 300))
+                }
+        }
+
+        return nil
+}
+
+// doRequestRaw performs a request WITHOUT auto-retrying on 401/403 and WITHOUT
+// setting Content-Type. Used when we need full control over headers.
+func (c *EdonishClient) doRequestRaw(req *http.Request) ([]byte, int, error) {
+        if req.Header.Get("Authorization") == "" && c.JWTToken != "" {
+                req.Header.Set("Authorization", "Bearer "+c.JWTToken)
+        }
+
+        resp, err := c.httpClient.Do(req)
+        if err != nil {
+                return nil, 0, err
+        }
+        defer resp.Body.Close()
+
+        respBody, err := io.ReadAll(resp.Body)
+        if err != nil {
+                return nil, resp.StatusCode, err
+        }
+
+        if resp.StatusCode >= 400 {
+                return respBody, resp.StatusCode, fmt.Errorf("сервер вернул ошибку (код %d): %s", resp.StatusCode, string(respBody))
+        }
+
+        return respBody, resp.StatusCode, nil
+}
+
+// isSignDiaryResponseEmpty checks whether the server response indicates
+// that no signatures were actually created. The edonish.tj server returns
+// 200 OK even on silent no-op, so we must inspect the body.
+func (c *EdonishClient) isSignDiaryResponseEmpty(body string) bool {
+        trimmed := strings.TrimSpace(body)
+        // Empty body → definitely no signatures
+        if trimmed == "" || trimmed == "null" || trimmed == "{}" {
+                return true
+        }
+        // Body contains an error message
+        lower := strings.ToLower(trimmed)
+        if strings.Contains(lower, "\"error\"") || strings.Contains(lower, "\"message\"") {
+                // Check if it looks like an error response, not a success with count
+                if !strings.Contains(lower, "\"count\"") && !strings.Contains(lower, "\"id\"") && !strings.Contains(lower, "\"success\"") {
+                        return true
+                }
+        }
+        // Response is just "0" or a zero count
+        if trimmed == "0" || trimmed == "[]" || trimmed == "{\"data\":null}" || trimmed == "{\"data\":[]}" {
+                return true
+        }
+        return false
 }
 
 // --- Final Grades methods ---
